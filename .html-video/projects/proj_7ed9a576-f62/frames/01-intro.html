@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<title>Intro</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { width: 1920px; height: 1080px; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; position: relative; background: #0d1b2a; }
+  .halo { position: absolute; width: 900px; height: 900px; border-radius: 50%; left: 50%; top: 42%; transform: translate(-50%, -50%); background: radial-gradient(circle, rgba(224,180,90,0.28) 0%, rgba(224,180,90,0.05) 55%, transparent 70%); animation: pulse 4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { transform: translate(-50%,-50%) scale(1); opacity: 0.7; } 50% { transform: translate(-50%,-50%) scale(1.12); opacity: 1; } }
+  .inner { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 0 200px; }
+  .kicker { font-size: 30px; letter-spacing: 8px; text-transform: uppercase; color: #e0b45a; font-weight: 700; margin-bottom: 30px; opacity: 0; animation: fadeUp 0.7s ease-out 0.3s forwards; }
+  h1 { font-size: 96px; color: #ffffff; font-weight: 700; line-height: 1.1; margin-bottom: 24px; opacity: 0; animation: fadeUp 0.8s ease-out 0.8s forwards; }
+  .sub { font-size: 34px; color: #c9d4e0; opacity: 0; animation: fadeUp 0.8s ease-out 1.4s forwards; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+  <div class="halo"></div>
+  <div class="inner">
+    <div class="kicker">Teologia Básica</div>
+    <h1>O que é Teologia? Uma Introdução</h1>
+    <div class="sub">Uma introdução didática ao estudo da fé cristã</div>
+  </div>
+</body>
+</html>

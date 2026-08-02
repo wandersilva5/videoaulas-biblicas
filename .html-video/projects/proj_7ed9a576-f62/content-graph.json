@@ -1,0 +1,136 @@
+{
+  "schemaVersion": 1,
+  "intent": "explainer",
+  "synopsis": "O que é Teologia? Uma Introdução",
+  "nodes": [
+    {
+      "id": "intro",
+      "kind": "text",
+      "label": "Introdução",
+      "durationSec": 16.376
+    },
+    {
+      "id": "slide-01",
+      "kind": "text",
+      "label": "O que é Teologia?",
+      "durationSec": 33.248
+    },
+    {
+      "id": "slide-02",
+      "kind": "text",
+      "label": "A origem da palavra",
+      "durationSec": 29.84
+    },
+    {
+      "id": "slide-03",
+      "kind": "text",
+      "label": "Teologia Bíblica",
+      "durationSec": 26.264
+    },
+    {
+      "id": "slide-04",
+      "kind": "text",
+      "label": "Teologia vs Filosofia",
+      "durationSec": 28.88
+    },
+    {
+      "id": "slide-05",
+      "kind": "text",
+      "label": "A Revelação Divina",
+      "durationSec": 28.136
+    },
+    {
+      "id": "slide-06",
+      "kind": "text",
+      "label": "A Bíblia como Base",
+      "durationSec": 27.704
+    },
+    {
+      "id": "slide-07",
+      "kind": "text",
+      "label": "Para que serve?",
+      "durationSec": 27.368000000000002
+    },
+    {
+      "id": "slide-08",
+      "kind": "text",
+      "label": "Teologia na Prática",
+      "durationSec": 26.528000000000002
+    },
+    {
+      "id": "slide-09",
+      "kind": "text",
+      "label": "A Atitude do Estudante",
+      "durationSec": 26.48
+    },
+    {
+      "id": "slide-10",
+      "kind": "text",
+      "label": "Encerrando",
+      "durationSec": 24.8
+    },
+    {
+      "id": "conclusao",
+      "kind": "text",
+      "label": "Conclusão",
+      "durationSec": 14.144
+    }
+  ],
+  "edges": [
+    {
+      "from": "intro",
+      "to": "slide-01",
+      "kind": "sequence"
+    },
+    {
+      "from": "slide-01",
+      "to": "slide-02",
+      "kind": "sequence"
+    },
+    {
+      "from": "slide-02",
+      "to": "slide-03",
+      "kind": "sequence"
+    },
+    {
+      "from": "slide-03",
+      "to": "slide-04",
+      "kind": "sequence"
+    },
+    {
+      "from": "slide-04",
+      "to": "slide-05",
+      "kind": "sequence"
+    },
+    {
+      "from": "slide-05",
+      "to": "slide-06",
+      "kind": "sequence"
+    },
+    {
+      "from": "slide-06",
+      "to": "slide-07",
+      "kind": "sequence"
+    },
+    {
+      "from": "slide-07",
+      "to": "slide-08",
+      "kind": "sequence"
+    },
+    {
+      "from": "slide-08",
+      "to": "slide-09",
+      "kind": "sequence"
+    },
+    {
+      "from": "slide-09",
+      "to": "slide-10",
+      "kind": "sequence"
+    },
+    {
+      "from": "slide-10",
+      "to": "conclusao",
+      "kind": "sequence"
+    }
+  ]
+}

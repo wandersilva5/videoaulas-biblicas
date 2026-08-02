@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<title>A origem da palavra</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { width: 1920px; height: 1080px; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; position: relative; background: #0d1b2a; }
+  .bg { position: absolute; inset: 0; }
+  .bg img { width: 100%; height: 100%; object-fit: cover; }
+  .veil { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(13,27,42,0.10) 0%, rgba(13,27,42,0.35) 55%, rgba(13,27,42,0.82) 100%); }
+  .content { position: absolute; inset: 0; padding: 70px 90px; display: flex; flex-direction: column; justify-content: flex-end; }
+  .card { background: linear-gradient(160deg, rgba(13,27,42,0.78) 0%, rgba(13,27,42,0.62) 100%); border: 1px solid rgba(224,180,90,0.35); border-radius: 22px; padding: 40px 52px; max-width: 1560px; box-shadow: 0 8px 40px rgba(0,0,0,0.45); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+  .kicker { font-size: 26px; letter-spacing: 5px; text-transform: uppercase; color: #e0b45a; font-weight: 700; margin-bottom: 14px; opacity: 0; animation: fadeUp 0.6s ease-out 0.2s forwards; }
+  h1 { font-size: 74px; color: #ffffff; font-weight: 700; line-height: 1.08; max-width: 1420px; margin-bottom: 26px; text-shadow: 0 3px 18px rgba(0,0,0,0.55); opacity: 0; animation: fadeUp 0.7s ease-out 0.5s forwards; }
+  ul { list-style: none; display: flex; flex-direction: column; gap: 14px; }
+  li { font-size: 34px; color: #eef3f9; padding-left: 34px; position: relative; max-width: 1420px; line-height: 1.25; opacity: 0; animation: fadeUp 0.6s ease-out forwards; }
+  li::before { content: '▸'; position: absolute; left: 0; color: #e0b45a; }
+  li:nth-child(1) { animation-delay: 0.9s; }
+  li:nth-child(2) { animation-delay: 1.2s; }
+  li:nth-child(3) { animation-delay: 1.5s; }
+  li:nth-child(4) { animation-delay: 1.8s; }
+  .foot { position: absolute; top: 0; left: 0; right: 0; padding: 40px 90px; display: flex; justify-content: space-between; align-items: center; color: rgba(255,255,255,0.75); font-size: 22px; letter-spacing: 2px; }
+  .foot .brand { color: #e0b45a; font-weight: 700; text-transform: uppercase; letter-spacing: 4px; }
+  .foot .counter { font-weight: 600; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(26px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+  <div class="bg"><img src="slide-02.png" /></div>
+  <div class="veil"></div>
+  <div class="foot">
+    <span class="brand">O que é Teologia? Uma Introdução</span>
+    <span class="counter">2 / 10</span>
+  </div>
+  <div class="content">
+    <div class="card">
+      <div class="kicker">Teologia Básica</div>
+      <h1>A origem da palavra</h1>
+      <ul><li>Etimologia grega</li><li>Deus + Estudo</li><li>Não é apenas opinião</li></ul>
+    </div>
+  </div>
+</body>
+</html>

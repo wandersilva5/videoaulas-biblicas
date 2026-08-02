@@ -1,0 +1,95 @@
+import { readFile, mkdir, writeFile } from 'node:fs/promises';
+import { join, dirname } from 'node:path';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const VOZ = process.env.VOZ || 'pt-BR-AntonioNeural';
+
+function tts(texto, outPath) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('edge-tts', ['--voice', VOZ, '--text', texto, '--write-media', outPath], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let err = '';
+    proc.stderr.on('data', (d) => (err += d.toString()));
+    proc.on('error', reject);
+    proc.on('exit', (code) => {
+      if (code === 0) resolve(outPath);
+      else reject(new Error(`edge-tts exit ${code}: ${err.slice(0, 300)}`));
+    });
+  });
+}
+
+/** Nomes de arquivo esperados pelo montar_video.mjs. */
+export function prefixoNarracao(index, total) {
+  if (index === 0) return '00-intro';
+  if (index === total - 1) return `${String(total - 1).padStart(2, '0')}-conclusao`;
+  return String(index).padStart(2, '0');
+}
+
+/** Gera o MP3 de um único item (intro, slide ou conclusão). */
+export async function gerarNarracaoItem(item, outDir) {
+  const outPath = join(outDir, `${item.prefix}-narracao.mp3`);
+  console.error(`  [narração] ${item.titulo} ...`);
+  await tts(item.texto, outPath);
+  console.error(`  OK: ${outPath}`);
+  return { id: item.id, titulo: item.titulo, path: outPath };
+}
+
+export async function gerarNarracao(roteiro, outDir) {
+  const narracao = [];
+  const textos = [
+    { id: 'intro', titulo: 'Introdução', texto: roteiro.introducao },
+    ...roteiro.slides.map((s) => ({ id: s.id, titulo: s.titulo, texto: s.narracao })),
+    { id: 'conclusao', titulo: 'Conclusão', texto: roteiro.conclusao },
+  ];
+  const total = textos.length;
+  for (let i = 0; i < textos.length; i++) {
+    const item = { ...textos[i], prefix: prefixoNarracao(i, total) };
+    console.error(`  [narração ${i + 1}/${total}] ${item.titulo} ...`);
+    narracao.push(await gerarNarracaoItem(item, outDir));
+  }
+  return narracao;
+}
+
+async function main() {
+  const roteiroPath = process.argv[2];
+  if (!roteiroPath) {
+    console.error('Uso: node gerar_narracao.mjs <caminho/roteiro.json> [--apenas <id>]');
+    console.error('  --apenas <id>  regenera só um item: intro, slide-01..., conclusao');
+    process.exit(1);
+  }
+  const apenasIdx = process.argv.indexOf('--apenas');
+  const apenas = apenasIdx !== -1 ? process.argv[apenasIdx + 1] : null;
+  const roteiro = JSON.parse(await readFile(roteiroPath, 'utf8'));
+  const outDir = dirname(roteiroPath);
+  const textos = [
+    { id: 'intro', titulo: 'Introdução', texto: roteiro.introducao },
+    ...roteiro.slides.map((s) => ({ id: s.id, titulo: s.titulo, texto: s.narracao })),
+    { id: 'conclusao', titulo: 'Conclusão', texto: roteiro.conclusao },
+  ];
+  const total = textos.length;
+  let items = textos.map((t, i) => ({ ...t, prefix: prefixoNarracao(i, total) }));
+  if (apenas) {
+    items = items.filter((t) => t.id === apenas);
+    if (items.length === 0) {
+      console.error(`ERRO: item "${apenas}" não encontrado (use: intro, slide-XX ou conclusao)`);
+      process.exit(1);
+    }
+  }
+  console.error(`[3/4] Gerando ${items.length} arquivo(s) de narração ...`);
+  const narracao = [];
+  for (const item of items) narracao.push(await gerarNarracaoItem(item, outDir));
+  console.log(JSON.stringify(narracao));
+}
+
+if (process.argv[1]) {
+  const scriptPath = fileURLToPath(import.meta.url).replace(/\\/g, '/');
+  const argPath = process.argv[1].replace(/\\/g, '/');
+  if (scriptPath === argPath) {
+    main().catch((e) => {
+      console.error('ERRO:', e.message);
+      process.exit(1);
+    });
+  }
+}

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Estúdio de Videoaulas</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topo">
+    <div class="topo-inner">
+      <button class="brand" id="btn-inicio" title="Início">
+        <span class="logo">✦</span>
+        <span>Estúdio de Videoaulas</span>
+      </button>
+      <div class="topo-acoes">
+        <button class="btn btn-ghost" id="btn-config" title="Configurações">⚙</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="app">
+    <!-- Dashboard -->
+    <section id="tela-dashboard" class="tela ativa">
+      <div class="container">
+        <h1 class="titulo-pagina">Aulas</h1>
+        <div class="nova-aula">
+          <input id="input-topico" type="text" placeholder='Ex.: "A doutrina da Trindade"' />
+          <button class="btn btn-primario" id="btn-nova-aula">Criar nova aula</button>
+        </div>
+        <div id="lista-aulas" class="grid-aulas"></div>
+      </div>
+    </section>
+
+    <!-- Workspace da aula -->
+    <section id="tela-aula" class="tela">
+      <div class="workspace">
+        <nav class="stepper" id="stepper"></nav>
+        <div class="conteudo">
+          <div class="caminho">
+            <button class="btn btn-ghost" id="btn-voltar">← Aulas</button>
+            <h2 id="titulo-aula"></h2>
+            <div class="spacer"></div>
+            <div id="dica-proximo" class="dica"></div>
+          </div>
+          <div id="etapa-container"></div>
+          <section class="painel-log">
+            <div class="painel-log-topo">
+              <button class="btn btn-ghost" id="btn-toggle-log">▾ Log das etapas</button>
+              <button class="btn btn-ghost btn-mini" id="btn-limpar-log">Limpar</button>
+            </div>
+            <div id="log-linhas" class="log-linhas"></div>
+          </section>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal de configurações -->
+  <div id="modal-config" class="modal" hidden>
+    <div class="modal-janela">
+      <h3>Configurações</h3>
+      <label>LLAMA_URL <input data-cfg="LLAMA_URL" type="text" /></label>
+      <label>COMFY_URL <input data-cfg="COMFY_URL" type="text" /></label>
+      <label>COMFY_OUTPUT_DIR <input data-cfg="COMFY_OUTPUT_DIR" type="text" /></label>
+      <label>KREA2_LORA <input data-cfg="KREA2_LORA" type="text" /></label>
+      <label>VOZ (edge-tts) <input data-cfg="VOZ" type="text" /></label>
+      <label>PORTA <input data-cfg="PORTA" type="number" /></label>
+      <div class="modal-acoes">
+        <button class="btn btn-ghost" id="btn-fechar-config">Fechar</button>
+        <button class="btn btn-primario" id="btn-salvar-config">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
