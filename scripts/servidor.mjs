@@ -16,7 +16,10 @@ const DEFAULTS = {
   LLAMA_URL: 'http://127.0.0.1:8091',
   COMFY_URL: 'http://127.0.0.1:8188',
   COMFY_OUTPUT_DIR: 'D:\\ComfyUI_windows_portable\\ComfyUI\\output',
-  KREA2_LORA: 'Krea2\\k2-illustria3_000000400.safetensors',
+  ZIMAGE_UNET: 'z-image\\z_image_turbo-Q4_K_M.gguf',
+  ZIMAGE_CLIP: 'qwen\\qwen3_4b_fp8_scaled.safetensors',
+  ZIMAGE_VAE: 'FLUX-Anime-VAE-B2.safetensors',
+  ZIMAGE_LORA: 'z-image\\z-image-anime-01.safetensors',
   VOZ: 'pt-BR-AntonioNeural',
   PORTA: '5173',
 };
@@ -107,9 +110,15 @@ function runJob({ etapa, args, env = {} }) {
         if (!l) continue;
         const m = /^(\d{1,3})%\s+(.*)$/.exec(l);
         if (m) emit('progress', m[2].trim() + ` (${m[1]}%)`);
-        else if (/erro/i.test(l)) emit('erro', l);
-        else if (/OK:/.test(l)) emit('ok', l);
-        else emit('log', l);
+        else {
+          const pm = /^\[([^\]]+?)\s+(\d+)\/(\d+)\]\s*(.*)$/.exec(l);
+          if (pm) {
+            const pct = Math.round((Number(pm[2]) / Number(pm[3])) * 100);
+            emit('progress', `${pm[1]} ${pm[2]}/${pm[3]}${pm[4] ? ' · ' + pm[4].trim() : ''} (${pct}%)`);
+          } else if (/erro/i.test(l)) emit('erro', l);
+          else if (/OK:/.test(l)) emit('ok', l);
+          else emit('log', l);
+        }
       }
     });
     child.on('error', (err) => {
@@ -504,7 +513,7 @@ const server = createServer(async (req, res) => {
         VIDEO_FPS: String(body.fps ?? 30),
         VIDEO_WIDTH: String(body.width ?? 1920),
         VIDEO_HEIGHT: String(body.height ?? 1080),
-        VIDEO_PADDING: String(body.padding ?? 0.8),
+        VIDEO_PADDING: String(body.padding ?? 0.3),
       };
       try {
         await runJob({ etapa: 'video', args: [join(SCRIPTS_DIR, 'montar_video.mjs'), roteiroPath], env });

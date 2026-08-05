@@ -5,6 +5,29 @@ import { fileURLToPath } from 'node:url';
 
 const VOZ = process.env.VOZ || 'pt-BR-AntonioNeural';
 
+const ORDINAIS_LIVROS = { '1': 'Primeira', '2': 'Segunda', '3': 'Terceira' };
+
+/**
+ * Normaliza o texto para o leitor de voz (edge-tts) pronunciar referências
+ * bíblicas corretamente:
+ *   - "1 Timóteo 3:1"  -> "Primeira Timóteo 3, 1"
+ *   - "João 3:16"      -> "João 3, 16"
+ *   - "1 Cor 13:4-7"   -> "Primeira Coríntios 13, 4 a 7"
+ * Sem isso o TTS lê "1 Timóteo 3 horas e 1 minuto".
+ */
+export function normalizarReferenciasParaTts(texto) {
+  return String(texto ?? '')
+    // Numeral do livro -> ordinal (somente antes de nome de livro bíblico)
+    .replace(
+      /\b([123])\s+(Timóteo|Coríntios|Tessalonicenses|Pedro|João|Joao|Reis|Crônicas|Cronicas|Samuel|Esdras|Macabeus)\b/gi,
+      (_, n, livro) => `${ORDINAIS_LIVROS[n]} ${livro}`,
+    )
+    // capítulo:versículo (com faixa opcional) -> capítulo, versículo
+    .replace(/\b(\d{1,3}):(\d{1,3})(?:\s*-\s*(\d{1,3}))?\b/g, (_, c, v, f) =>
+      f ? `${c}, ${v} a ${f}` : `${c}, ${v}`,
+    );
+}
+
 function tts(texto, outPath) {
   return new Promise((resolve, reject) => {
     const proc = spawn('edge-tts', ['--voice', VOZ, '--text', texto, '--write-media', outPath], {
@@ -31,7 +54,7 @@ export function prefixoNarracao(index, total) {
 export async function gerarNarracaoItem(item, outDir) {
   const outPath = join(outDir, `${item.prefix}-narracao.mp3`);
   console.error(`  [narração] ${item.titulo} ...`);
-  await tts(item.texto, outPath);
+  await tts(normalizarReferenciasParaTts(item.texto), outPath);
   console.error(`  OK: ${outPath}`);
   return { id: item.id, titulo: item.titulo, path: outPath };
 }

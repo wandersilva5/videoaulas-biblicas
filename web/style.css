@@ -222,7 +222,7 @@ input, textarea, select { font: inherit; }
   position: relative; border: 1px solid var(--borda); border-radius: var(--raio);
   overflow: hidden; background: var(--painel);
 }
-.img-card img { width: 100%; display: block; aspect-ratio: 16 / 9; object-fit: cover; }
+.img-card img { width: 100%; display: block; aspect-ratio: 16 / 9; object-fit: cover; cursor: zoom-in; }
 .img-card .img-info {
   display: flex; align-items: center; justify-content: space-between;
   padding: 9px 12px; font-size: 13px; color: var(--texto-2);
@@ -311,6 +311,72 @@ input, textarea, select { font: inherit; }
   border-radius: 8px; padding: 8px 10px; outline: none;
 }
 .modal-acoes { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+
+/* ---------- Status do job ---------- */
+.status-job {
+  display: flex; align-items: flex-start; gap: 12px;
+  background: var(--painel); border: 1px solid var(--borda);
+  border-left: 4px solid var(--ouro); border-radius: 12px;
+  padding: 12px 16px; margin-bottom: 16px;
+  animation: fadeIn 0.25s ease;
+}
+.status-job[hidden] { display: none; }
+.status-job .status-icone { font-size: 20px; line-height: 1.3; }
+.status-job .status-texto { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+.status-job .status-texto strong { font-size: 14px; }
+.status-job .status-texto span { font-size: 13px; color: var(--texto-2); word-break: break-word; }
+.status-job .status-barra { margin: 6px 0 0; max-width: 460px; }
+.status-job.rodando { border-left-color: var(--ouro); }
+.status-job.ok { border-left-color: var(--ok); }
+.status-job.erro { border-left-color: var(--erro); }
+
+/* ---------- Modal fullscreen de slides ---------- */
+.modal-slide {
+  background: rgba(4, 8, 15, 0.92);
+  flex-direction: column; padding: 20px;
+}
+.modal-slide[hidden] { display: none; }
+.slide-fechar {
+  position: fixed; top: 18px; right: 22px; z-index: 2;
+  width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--borda);
+  background: rgba(11, 19, 32, 0.85); color: var(--texto); font-size: 18px;
+  transition: all 0.15s ease;
+}
+.slide-fechar:hover { border-color: var(--ouro); color: var(--ouro); transform: rotate(90deg); }
+.slide-nav {
+  position: fixed; top: 50%; transform: translateY(-50%); z-index: 2;
+  width: 54px; height: 54px; border-radius: 50%; border: 1px solid var(--borda);
+  background: rgba(11, 19, 32, 0.85); color: var(--texto); font-size: 30px;
+  line-height: 1; transition: all 0.15s ease;
+}
+.slide-nav:hover { border-color: var(--ouro); color: var(--ouro); }
+.nav-anterior { left: 22px; }
+.nav-proximo { right: 22px; }
+.modal-slide-fig {
+  max-width: min(96vw, 1600px); max-height: 92vh;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+.modal-slide-fig img {
+  max-width: 100%; max-height: 84vh; object-fit: contain;
+  border-radius: 10px; box-shadow: var(--sombra);
+  background: #000;
+}
+.modal-slide-fig figcaption {
+  display: flex; align-items: center; gap: 14px;
+  color: var(--texto-2); font-size: 14px;
+}
+.modal-slide-fig .slide-contador {
+  background: var(--painel-2); border: 1px solid var(--borda);
+  color: var(--ouro); font-weight: 700; border-radius: 999px; padding: 4px 12px;
+  font-size: 13px;
+}
+.modal-slide-fig .slide-titulo { font-weight: 600; color: var(--texto); }
+
+@media (max-width: 860px) {
+  .slide-nav { width: 44px; height: 44px; font-size: 24px; }
+  .nav-anterior { left: 8px; }
+  .nav-proximo { right: 8px; }
+}
 
 /* ---------- Toast ---------- */
 .toast {

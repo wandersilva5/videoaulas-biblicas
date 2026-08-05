@@ -40,9 +40,11 @@
           <div class="caminho">
             <button class="btn btn-ghost" id="btn-voltar">← Aulas</button>
             <h2 id="titulo-aula"></h2>
+            <button class="btn btn-ghost btn-mini" id="btn-atualizar" title="Recarregar roteiro e artefatos">↻ Atualizar</button>
             <div class="spacer"></div>
             <div id="dica-proximo" class="dica"></div>
           </div>
+          <div id="status-job" class="status-job" hidden></div>
           <div id="etapa-container"></div>
           <section class="painel-log">
             <div class="painel-log-topo">
@@ -63,7 +65,10 @@
       <label>LLAMA_URL <input data-cfg="LLAMA_URL" type="text" /></label>
       <label>COMFY_URL <input data-cfg="COMFY_URL" type="text" /></label>
       <label>COMFY_OUTPUT_DIR <input data-cfg="COMFY_OUTPUT_DIR" type="text" /></label>
-      <label>KREA2_LORA <input data-cfg="KREA2_LORA" type="text" /></label>
+      <label>ZIMAGE_UNET <input data-cfg="ZIMAGE_UNET" type="text" /></label>
+      <label>ZIMAGE_CLIP <input data-cfg="ZIMAGE_CLIP" type="text" /></label>
+      <label>ZIMAGE_VAE <input data-cfg="ZIMAGE_VAE" type="text" /></label>
+      <label>ZIMAGE_LORA <input data-cfg="ZIMAGE_LORA" type="text" /></label>
       <label>VOZ (edge-tts) <input data-cfg="VOZ" type="text" /></label>
       <label>PORTA <input data-cfg="PORTA" type="number" /></label>
       <div class="modal-acoes">
@@ -74,6 +79,20 @@
   </div>
 
   <div id="toast" class="toast" hidden></div>
+
+  <!-- Modal de visualização fullscreen de slides -->
+  <div id="modal-slide" class="modal modal-slide" hidden>
+    <button class="slide-fechar" id="slide-fechar" title="Fechar (Esc)">✕</button>
+    <button class="slide-nav nav-anterior" id="slide-anterior" title="Anterior (←)">‹</button>
+    <figure class="modal-slide-fig">
+      <img id="modal-slide-img" src="" alt="" />
+      <figcaption>
+        <span id="modal-slide-contador" class="slide-contador"></span>
+        <span id="modal-slide-titulo" class="slide-titulo"></span>
+      </figcaption>
+    </figure>
+    <button class="slide-nav nav-proximo" id="slide-proximo" title="Próximo (→)">›</button>
+  </div>
 
   <script src="/app.js" type="module"></script>
 </body>

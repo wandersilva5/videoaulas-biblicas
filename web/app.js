@@ -15,8 +15,12 @@ const estado = {
   config: null,
   etapa: 1,
   jobAtivo: false,
+  job: null,
+  modalIndice: null,
   logs: [],
 };
+
+const NOME_ETAPA = { roteiro: 'Roteiro', imagens: 'Imagens', narracao: 'Narração', video: 'Vídeo' };
 
 const esc = (s) =>
   String(s ?? '').replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>').replace(/"/g, '"');
@@ -138,6 +142,33 @@ function mudarEtapa(n) {
   else if (n === 3) renderEtapa3(container);
   else renderEtapa4(container);
   sincronizarBotoes();
+  renderStatusJob();
+}
+
+let _jobClearT = null;
+
+function renderStatusJob() {
+  const el = $('#status-job');
+  const job = estado.job;
+  if (!job) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  el.className = `status-job ${job.status}`;
+  const rotulo = NOME_ETAPA[job.etapa] || job.etapa;
+  const icone =
+    job.status === 'ok' ? '✓' :
+    job.status === 'erro' ? '✕' : '🔄';
+  const statusTexto = job.status === 'ok' ? `${rotulo} concluída com sucesso` :
+    job.status === 'erro' ? `${rotulo} falhou` : `${rotulo} em andamento`;
+  el.innerHTML = `
+    <span class="status-icone">${icone}</span>
+    <div class="status-texto">
+      <strong>${statusTexto}</strong>
+      <span>${esc(job.msg || '')}</span>
+      ${job.pct != null ? `<div class="barra-progresso status-barra"><div style="width:${Math.max(0, Math.min(100, job.pct))}%"></div></div>` : ''}
+    </div>`;
 }
 
 function sincronizarBotoes() {
@@ -277,7 +308,7 @@ function renderEtapa2(el) {
       const badge = s.imagem.existe
         ? (s.imagem.desatualizado ? '<span class="badge alerta">prompt alterado</span>' : '<span class="badge ok">ok</span>')
         : '<span class="badge erro">pendente</span>';
-      return `<div class="img-card ${s.imagem.existe ? '' : 'faltando'}">${img}${regen}
+      return `<div class="img-card ${s.imagem.existe ? '' : 'faltando'}" data-idx="${s.idx}">${img}${regen}
         <div class="img-info"><span>${esc(s.titulo)}</span>${badge}</div></div>`;
     })
     .join('');
@@ -374,7 +405,7 @@ function renderEtapa4(el) {
         </label>
         <label>Largura (custom) <input id="cfg-width" type="number" value="1920" min="320" step="16" /></label>
         <label>Altura (custom) <input id="cfg-height" type="number" value="1080" min="240" step="16" /></label>
-        <label>Segundos de margem/slide <input id="cfg-padding" type="number" value="0.8" min="0" step="0.1" /></label>
+        <label>Segundos de margem/slide <input id="cfg-padding" type="number" value="0.3" min="0" step="0.1" /></label>
       </div>
       <p class="msg-progresso">O vídeo sai como <strong>&lt;slug&gt;-&lt;largura&gt;x&lt;altura&gt;.mp4</strong> — formatos diferentes não se sobrescrevem.</p>
       <div id="area-progresso-video" hidden>
@@ -392,6 +423,47 @@ function setProgressoVideo(pct, texto) {
   $('#barra-progresso-video').style.width = `${Math.max(0, Math.min(100, pct))}%`;
   $('#msg-progresso-video').textContent = texto || '…';
 }
+
+// ---------------------------------------------------------------------------
+// Modal fullscreen de slides
+// ---------------------------------------------------------------------------
+function abrirModalSlide(i) {
+  const slides = estado.artefatos?.slides || [];
+  if (!slides.length) return;
+  estado.modalIndice = ((i % slides.length) + slides.length) % slides.length;
+  const s = slides[estado.modalIndice];
+  $('#modal-slide-img').src = `/media/${estado.slug}/slide-${String(s.idx).padStart(2, '0')}.png`;
+  $('#modal-slide-img').alt = s.titulo || '';
+  $('#modal-slide-contador').textContent = `${s.idx} / ${slides.length}`;
+  $('#modal-slide-titulo').textContent = s.titulo || '';
+  $('#modal-slide').hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+
+function fecharModalSlide() {
+  $('#modal-slide').hidden = true;
+  $('#modal-slide-img').src = '';
+  estado.modalIndice = null;
+  document.body.style.overflow = '';
+}
+
+function navegarModalSlide(delta) {
+  if (estado.modalIndice == null) return;
+  abrirModalSlide(estado.modalIndice + delta);
+}
+
+$('#slide-fechar').onclick = fecharModalSlide;
+$('#slide-anterior').onclick = () => navegarModalSlide(-1);
+$('#slide-proximo').onclick = () => navegarModalSlide(1);
+$('#modal-slide').addEventListener('click', (ev) => {
+  if (ev.target === $('#modal-slide')) fecharModalSlide();
+});
+document.addEventListener('keydown', (ev) => {
+  if ($('#modal-slide').hidden) return;
+  if (ev.key === 'Escape') fecharModalSlide();
+  else if (ev.key === 'ArrowLeft') navegarModalSlide(-1);
+  else if (ev.key === 'ArrowRight') navegarModalSlide(1);
+});
 
 // ---------------------------------------------------------------------------
 // Ações
@@ -447,6 +519,12 @@ async function rodarJob(promise, mensagemOk) {
 // Delegação de eventos (etapa container)
 // ---------------------------------------------------------------------------
 $('#etapa-container').addEventListener('click', async (ev) => {
+  const img = ev.target.closest('.img-card img');
+  if (img) {
+    const card = img.closest('.img-card');
+    if (card?.dataset.idx) abrirModalSlide(Number(card.dataset.idx) - 1);
+    return;
+  }
   const btn = ev.target.closest('button[data-action]');
   if (!btn) return;
   const acao = btn.dataset.action;
@@ -601,6 +679,17 @@ $('#input-topico').addEventListener('keydown', (ev) => {
 
 $('#btn-voltar').onclick = () => mostrarTela('dashboard');
 $('#btn-inicio').onclick = () => mostrarTela('dashboard');
+$('#btn-atualizar').onclick = async () => {
+  if (estado.jobAtivo) return toast('Aguarde o job atual terminar.', true);
+  try {
+    await Promise.all([carregarRoteiro(), carregarArtefatos()]);
+    $('#titulo-aula').textContent = estado.roteiro.titulo_aula;
+    mudarEtapa(estado.etapa);
+    toast('Aula atualizada.');
+  } catch (e) {
+    toast(e.message, true);
+  }
+};
 
 // ---------------------------------------------------------------------------
 // Log
@@ -629,11 +718,48 @@ sse.addEventListener('progresso', (ev) => {
   if (msg.tipo === 'inicio') {
     estado.jobAtivo = true;
     sincronizarBotoes();
+    clearTimeout(_jobClearT);
+    estado.job = { etapa: msg.etapa, status: 'rodando', msg: 'Preparando…' };
+    renderStatusJob();
+  }
+  if (msg.tipo === 'progress') {
+    if (estado.job?.etapa === msg.etapa) {
+      estado.job.status = 'rodando';
+      estado.job.msg = msg.linha;
+      const m = /\((\d+)%\)$/.exec(msg.linha);
+      estado.job.pct = m ? Number(m[1]) : estado.job.pct;
+      renderStatusJob();
+    }
+  }
+  if (msg.tipo === 'erro') {
+    if (estado.job?.etapa === msg.etapa) {
+      estado.job.status = 'erro';
+      estado.job.msg = msg.linha;
+      renderStatusJob();
+    }
+  }
+  if (msg.tipo === 'log') {
+    if (estado.job?.etapa === msg.etapa) {
+      estado.job.status = 'rodando';
+      estado.job.msg = msg.linha;
+      renderStatusJob();
+    }
   }
   if (msg.tipo === 'fim') {
     estado.jobAtivo = false;
     sincronizarBotoes();
     if (estado.etapa === 4) setProgressoVideo(msg.ok ? 100 : 0, msg.ok ? 'Vídeo pronto!' : 'Falha na montagem');
+    estado.job = {
+      etapa: msg.etapa,
+      status: msg.ok ? 'ok' : 'erro',
+      msg: msg.ok ? 'Processo finalizado com sucesso.' : 'Falha na execução — veja o log.',
+    };
+    renderStatusJob();
+    clearTimeout(_jobClearT);
+    _jobClearT = setTimeout(() => {
+      estado.job = null;
+      renderStatusJob();
+    }, 8000);
     setTimeout(() => {
       if (estado.tela === 'aula') {
         carregarArtefatos();

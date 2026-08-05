@@ -29,7 +29,7 @@ const HTML_VIDEO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const FPS = Number(process.env.VIDEO_FPS) || 30;
 const WIDTH = Number(process.env.VIDEO_WIDTH) || 1920;
 const HEIGHT = Number(process.env.VIDEO_HEIGHT) || 1080;
-const SLIDE_PADDING_SEC = process.env.VIDEO_PADDING !== undefined && process.env.VIDEO_PADDING !== '' ? Number(process.env.VIDEO_PADDING) : 0.8;
+const SLIDE_PADDING_SEC = process.env.VIDEO_PADDING !== undefined && process.env.VIDEO_PADDING !== '' ? Number(process.env.VIDEO_PADDING) : 0.3;
 
 // Escala tipográfica proporcional à largura (referência 16:9 = 1920px de largura).
 // Assim o layout adapta a proporção escolhida (9:16, 4:5, etc.) sem quebrar.

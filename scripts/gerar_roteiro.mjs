@@ -52,10 +52,10 @@ Gere SEMPRE um JSON válido, sem markdown, sem texto extra, com esta estrutura e
       "pontos": ["ponto 1 curto", "ponto 2 curto", "ponto 3 curto"],
       "narracao": "Texto de 60-90 palavras narrado, explicando o slide de forma didática e fluida, como se estivesse apresentando, citando a referência bíblica",
       "referencia_biblica": "Livro capítulo:versículo (ex.: João 3:16)",
-      "imagem_prompt": "Prompt de imagem em inglês para gerar ilustração didática deste conceito teológico. Estilo flat illustration, clean educational diagram, cores sóbrias (azul marinho, dourado, creme). Exemplo: 'flat illustration, open bible with golden light rays, candle and scroll, warm cream and navy palette, educational minimal style'"
+      "imagem_prompt": "Prompt de imagem em inglês para gerar ilustração didática deste conceito teológico. Estilo flat illustration, clean educational diagram, cores sóbrias (azul marinho, dourado, creme). Qualquer texto que aparecer na imagem deve estar em português do Brasil (pt-BR). Exemplo: 'flat illustration, open bible with golden light rays, candle and scroll, warm cream and navy palette, educational minimal style, text in Portuguese'"
     }
   ],
-  "conclusao": "2-3 frases de encerramento narradas, fechando com uma aplicação prática e outra referência bíblica"
+  "conclusao": "3-5 frases de encerramento narradas: comece agradecendo a audiência, feche com uma aplicação prática e outra referência bíblica, e termine convidando a apoiar o projeto — inscrever-se no canal, curtir e compartilhar o vídeo para que mais pessoas sejam abençoadas, e ler a descrição para saber como apoiar de outras formas"
 }
 
 REGRAS:
@@ -66,7 +66,8 @@ REGRAS:
 - Referências bíblicas: TODOS os slides, a introdução e a conclusão devem citar ao menos uma referência bíblica (livro capítulo:versículo) no campo "referencia_biblica" e mencioná-la na narração. Use a versão Almeida Revista e Corrigida (ARC) como base para o texto das citações.
 - As referências devem estar corretas e fiéis ao ensino bíblico, com o estudo permanecendo educacional, cristão e edificante (fé, doutrina e prática).
 - Explicação de termos: sempre que um termo técnico ou importante aparecer (ex.: teologia, hermenêutica, exegese, escatologia, soteriologia, graça, santificação, expiação, justificação, etc.), dedique um ponto do slide para explicá-lo de forma simples, com origem etimológica quando ajudar (ex.: "Teologia vem do grego: Teo = Deus + logia = estudo, ou seja, estudo sobre Deus"). Linguagem acessível, como quem conversa com um iniciante, sem jargão acadêmico.
-- imagem_prompt: sempre descrever cena flat illustration educativa SEM texto na imagem.`;
+- Narração legível por leitor de voz (TTS): nos campos de narração (introducao, slides, conclusao) escreva as referências bíblicas por extenso como seriam faladas, ex.: "Primeira Timóteo 3, 1" em vez de "1 Timóteo 3:1", "João 3, 16" em vez de "João 3:16". Já o campo "referencia_biblica" deve continuar no formato padrão (ex.: "1 Timóteo 3:1").
+- imagem_prompt: sempre descrever cena flat illustration educativa. Se houver qualquer texto na imagem, ele deve estar em português do Brasil (pt-BR) e sem erros de ortografia; idealmente minimize texto na imagem.`;
 
 export async function gerarRoteiro(topico) {
   const MIN_SLIDES = 15;

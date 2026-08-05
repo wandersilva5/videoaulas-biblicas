@@ -6,23 +6,32 @@ import { fileURLToPath } from 'node:url';
 const COMFY_URL = process.env.COMFY_URL || 'http://127.0.0.1:8188';
 const COMFY_OUTPUT_DIR = process.env.COMFY_OUTPUT_DIR || 'D:\\ComfyUI_windows_portable\\ComfyUI\\output';
 
-const LORA_NAME = process.env.KREA2_LORA || 'Krea2\\k2-illustria3_000000400.safetensors';
+const ZIMAGE_UNET = process.env.ZIMAGE_UNET || 'z-image\\z_image_turbo-Q4_K_M.gguf';
+const ZIMAGE_CLIP = process.env.ZIMAGE_CLIP || 'qwen\\qwen3_4b_fp8_scaled.safetensors';
+const ZIMAGE_VAE = process.env.ZIMAGE_VAE || 'FLUX-Anime-VAE-B2.safetensors';
+const LORA_NAME = process.env.ZIMAGE_LORA || 'z-image\\z-image-anime-01.safetensors';
 const SEED_BASE = process.env.KREA2_SEED_BASE !== undefined && process.env.KREA2_SEED_BASE !== '' ? Number(process.env.KREA2_SEED_BASE) : 1000;
 
-// Replica o workflow "Krea2 - Simples.json" do usuário:
-// VAE qwen_image_vae + LoRA + ApplyKrea2NegPiP + ConditioningZeroOut (negativo zerado).
+// Replica o workflow "Z-Image Turbo.json" do usuário:
+// UnetLoaderGGUFAdvanced (z_image_turbo-Q4_K_M) + CLIPLoader lumina2 (Qwen3-4B)
+// + LoRA z-image-anime + ModelSamplingAuraFlow + VAE FLUX-Anime + 9 passos.
+// Obs.: usa UnetLoaderGGUFAdvanced/CLIPLoader (safetensors) porque o custom node
+// ComfyUI-GGUF-FantasyTalking sobrescreve UnetLoaderGGUF/CLIPLoaderGGUF com
+// retornos quebrados (WANVIDEOMODEL e lista de arquiteturas antiga).
+const NEGATIVE_PROMPT = 'low resolution, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, artist name, cropped, out of frame, long neck, deformed, watermark, text, logo, lowres, jpeg artifacts, blurry';
+
 const WORKFLOW_TEMPLATE = {
-  "2": { class_type: "UNETLoader", inputs: { unet_name: "Krea2\\krea2_turbo_fp8_scaled.safetensors", weight_dtype: "default" } },
-  "3": { class_type: "CLIPLoader", inputs: { clip_name: "qwen\\qwen3vl_4b_fp8_scaled.safetensors", type: "krea2" } },
-  "17": { class_type: "VAELoader", inputs: { vae_name: "qwen_image_vae.safetensors" } },
-  "18": { class_type: "LoraLoader", inputs: { model: ["2", 0], clip: ["3", 0], lora_name: "__LORA__", strength_model: 1.0, strength_clip: 1.0 } },
-  "4": { class_type: "ApplyKrea2NegPiP", inputs: { model: ["18", 0], clip: ["18", 1], value_strength: 1.0, patch_txtfusion_refiners: false, block_start: 0, block_end: 27, block_stride: 1 } },
-  "5": { class_type: "CLIPTextEncode", inputs: { clip: ["4", 1], text: "__POSITIVE__" } },
-  "7": { class_type: "ConditioningZeroOut", inputs: { conditioning: ["5", 0] } },
-  "8": { class_type: "EmptyLatentImage", inputs: { width: 1152, height: 640, batch_size: 1 } },
-  "6": { class_type: "KSampler", inputs: { model: ["4", 0], positive: ["5", 0], negative: ["7", 0], latent_image: ["8", 0], seed: "__SEED__", steps: 8, cfg: 1.0, sampler_name: "euler", scheduler: "simple", denoise: 1.0 } },
-  "9": { class_type: "VAEDecode", inputs: { samples: ["6", 0], vae: ["17", 0] } },
-  "10": { class_type: "SaveImage", inputs: { images: ["9", 0], filename_prefix: "teologia_slide" } },
+  "1": { class_type: "UnetLoaderGGUFAdvanced", inputs: { unet_name: "__UNET__", dequant_dtype: "default", patch_dtype: "default", patch_on_device: false } },
+  "2": { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: "__LORA__", strength_model: 0.8 } },
+  "3": { class_type: "ModelSamplingAuraFlow", inputs: { model: ["2", 0], shift: 7 } },
+  "4": { class_type: "CLIPLoader", inputs: { clip_name: "__CLIP__", type: "lumina2" } },
+  "5": { class_type: "CLIPTextEncode", inputs: { clip: ["4", 0], text: "__POSITIVE__" } },
+  "6": { class_type: "CLIPTextEncode", inputs: { clip: ["4", 0], text: NEGATIVE_PROMPT } },
+  "7": { class_type: "EmptySD3LatentImage", inputs: { width: 1152, height: 640, batch_size: 1 } },
+  "8": { class_type: "KSampler", inputs: { model: ["3", 0], positive: ["5", 0], negative: ["6", 0], latent_image: ["7", 0], seed: "__SEED__", steps: 9, cfg: 1.0, sampler_name: "euler", scheduler: "normal", denoise: 1.0 } },
+  "9": { class_type: "VAELoader", inputs: { vae_name: "__VAE__" } },
+  "10": { class_type: "VAEDecode", inputs: { samples: ["8", 0], vae: ["9", 0] } },
+  "11": { class_type: "SaveImage", inputs: { images: ["10", 0], filename_prefix: "teologia_slide" } },
 };
 
 async function submeterPrompt(workflow) {
@@ -38,7 +47,9 @@ async function submeterPrompt(workflow) {
   return (await resp.json()).prompt_id;
 }
 
-async function aguardarExecucao(promptId, timeoutMs = 300000) {
+const COMFY_TIMEOUT_MS = Number(process.env.COMFY_TIMEOUT_MS || 900000);
+
+async function aguardarExecucao(promptId, timeoutMs = COMFY_TIMEOUT_MS) {
   const inicio = Date.now();
   while (Date.now() - inicio < timeoutMs) {
     await new Promise((r) => setTimeout(r, 3000));
@@ -67,9 +78,12 @@ async function aguardarExecucao(promptId, timeoutMs = 300000) {
 
 export async function gerarImagemSlide(prompt, seed = 42) {
   const workflow = structuredClone(WORKFLOW_TEMPLATE);
-  workflow['5'].inputs.text = prompt;
-  workflow['18'].inputs.lora_name = LORA_NAME;
-  workflow['6'].inputs.seed = seed;
+  workflow['1'].inputs.unet_name = ZIMAGE_UNET;
+  workflow['2'].inputs.lora_name = LORA_NAME;
+  workflow['4'].inputs.clip_name = ZIMAGE_CLIP;
+  workflow['9'].inputs.vae_name = ZIMAGE_VAE;
+  workflow['5'].inputs.text = `${prompt}, any text must be written in Brazilian Portuguese`;
+  workflow['8'].inputs.seed = seed;
   const promptId = await submeterPrompt(workflow);
   const files = await aguardarExecucao(promptId);
   const file = files[0];
@@ -89,7 +103,12 @@ export async function gerarImagensSlides(slides, outDir) {
     }
     const seed = SEED_BASE + i * 137;
     console.error(`  [imagem ${i + 1}/${slides.length}] ${slide.titulo} ...`);
+    const inicioImg = Date.now();
+    const hb = setInterval(() => {
+      console.error(`  [imagem ${i + 1}/${slides.length}] ${slide.titulo} ... aguardando ComfyUI (${Math.round((Date.now() - inicioImg) / 1000)}s)`);
+    }, 15000);
     const src = await gerarImagemSlide(slide.imagem_prompt, seed);
+    clearInterval(hb);
     await copyFile(src, dest);
     imagens.push({ id: slide.id, path: dest });
     console.error(`  OK: ${dest}`);
