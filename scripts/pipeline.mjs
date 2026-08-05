@@ -1,11 +1,11 @@
-import { readFile, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
-const SCRIPTS_DIR = dirname(import.meta.url);
+const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
 const MONTA_VIDEO = join(SCRIPTS_DIR, 'montar_video.mjs');
 
 async function rodarNode(script, args) {

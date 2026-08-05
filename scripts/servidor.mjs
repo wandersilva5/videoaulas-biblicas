@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { readFile, writeFile, readdir, mkdir, unlink } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, unlink, rename } from 'node:fs/promises';
 import { existsSync, createReadStream, statSync } from 'node:fs';
 import { join, dirname, basename, extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -219,7 +219,14 @@ async function artefatos(slug) {
     };
   });
 
-  const video = join(outDir, `${slug}.mp4`);
+  const videos = (await readdir(outDir))
+    .filter((f) => f.toLowerCase().endsWith('.mp4'))
+    .map((f) => {
+      const p = join(outDir, f);
+      return { arquivo: f, mtime: mtimeDe(p), tamanho: existsSync(p) ? statSync(p).size : 0 };
+    })
+    .sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
+  const ultimo = videos[0] ?? null;
   return {
     slug,
     roteiroMtime,
@@ -227,10 +234,12 @@ async function artefatos(slug) {
     slides,
     conclusao: audioDe(itens[itens.length - 1]),
     video: {
-      existe: existsSync(video),
-      mtime: mtimeDe(video),
-      tamanho: existsSync(video) ? statSync(video).size : 0,
+      existe: !!ultimo,
+      mtime: ultimo?.mtime ?? null,
+      tamanho: ultimo?.tamanho ?? 0,
+      arquivo: ultimo?.arquivo ?? null,
     },
+    videos,
     audioCompleto: [itens[0], ...itens.slice(1, -1), itens[itens.length - 1]].every((it) => audioDe(it).existe),
     imagensCompletas: slides.every((s) => s.imagem.existe),
   };
@@ -372,10 +381,7 @@ const server = createServer(async (req, res) => {
       }
     }
 
-    if (!slug || !ehSlugValido(slug)) return json(res, 400, { erro: 'Slug inválido' });
-    const roteiroPath = join(OUTPUT_DIR, slug, 'roteiro.json');
-
-    // --- Roteiro ---
+    // --- Roteiro (POST cria nova aula — não tem slug ainda) ---
     if (recurso === 'roteiro' && req.method === 'POST') {
       const body = await lerBody(req);
       if (!body.topico) return json(res, 400, { erro: 'Campo "topico" é obrigatório' });
@@ -388,6 +394,9 @@ const server = createServer(async (req, res) => {
       const roteiro = await lerRoteiro(novoSlug);
       return json(res, 200, { slug: novoSlug, roteiro });
     }
+
+    if (!slug || !ehSlugValido(slug)) return json(res, 400, { erro: 'Slug inválido' });
+    const roteiroPath = join(OUTPUT_DIR, slug, 'roteiro.json');
 
     if (recurso === 'roteiro' && req.method === 'GET') {
       if (!existsSync(roteiroPath)) return json(res, 404, { erro: 'Roteiro não existe' });
@@ -410,8 +419,6 @@ const server = createServer(async (req, res) => {
       if (!existsSync(roteiroPath)) return json(res, 404, { erro: 'Roteiro não existe' });
       return json(res, 200, await artefatos(slug));
     }
-
-    const { rename } = await import('node:fs/promises');
 
     // --- Imagens ---
     if (recurso === 'imagens' && req.method === 'POST') {
@@ -504,7 +511,8 @@ const server = createServer(async (req, res) => {
       } catch (e) {
         return json(res, e.code === 'JOB_ATIVO' ? 409 : 500, { erro: e.message });
       }
-      return json(res, 200, { ok: true, output_path: `${slug}.mp4`, url: `/media/${slug}/${slug}.mp4` });
+      const arquivo = `${slug}-${String(body.width ?? 1920)}x${String(body.height ?? 1080)}.mp4`;
+      return json(res, 200, { ok: true, output_path: arquivo, url: `/media/${slug}/${arquivo}` });
     }
 
     return json(res, 404, { erro: 'Rota não encontrada' });

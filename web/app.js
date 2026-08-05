@@ -19,7 +19,16 @@ const estado = {
 };
 
 const esc = (s) =>
-  String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  String(s ?? '').replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>').replace(/"/g, '"');
+
+function slugDe(topico) {
+  return topico
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
 
 function toast(msg, erro = false) {
   const t = $('#toast');
@@ -164,6 +173,10 @@ function renderEtapa1(el) {
         <textarea data-slide="${i}" data-field="narracao">${esc(s.narracao)}</textarea>
       </div>
       <div class="campo-texto">
+        <label>Referência bíblica</label>
+        <input data-slide="${i}" data-field="referencia_biblica" value="${esc(s.referencia_biblica || '')}" placeholder="Livro capítulo:versículo (ex.: João 3:16)" />
+      </div>
+      <div class="campo-texto">
         <label>Prompt da imagem (EN)</label>
         <input data-slide="${i}" data-field="imagem_prompt" value="${esc(s.imagem_prompt)}" />
       </div>
@@ -226,6 +239,7 @@ function lerRoteiroDoDOM() {
   r.slides.forEach((s, i) => {
     s.titulo = $(`[data-slide="${i}"][data-field="titulo"]`)?.value ?? s.titulo;
     s.narracao = $(`[data-slide="${i}"][data-field="narracao"]`)?.value ?? s.narracao;
+    s.referencia_biblica = $(`[data-slide="${i}"][data-field="referencia_biblica"]`)?.value ?? (s.referencia_biblica || '');
     s.imagem_prompt = $(`[data-slide="${i}"][data-field="imagem_prompt"]`)?.value ?? s.imagem_prompt;
     s.pontos = Array.from(document.querySelectorAll(`[data-slide="${i}"][data-ponto]`))
       .map((inp) => inp.value)
@@ -324,9 +338,13 @@ function renderEtapa4(el) {
   if (!st.imagensCompletas) problemas.push('faltam imagens (etapa 2)');
   if (!st.audioCompleto) problemas.push('faltam narrações (etapa 3)');
   const pode = problemas.length === 0;
-  const video = st.video.existe
-    ? `<video class="player-video" controls src="/media/${estado.slug}/${estado.slug}.mp4"></video>`
-    : '';
+  const videos = (st.videos || [])
+    .map((v) => `
+    <div class="video-item">
+      <div class="video-rotulo">${esc(v.arquivo)}</div>
+      <video class="player-video" controls src="/media/${estado.slug}/${esc(v.arquivo)}"></video>
+    </div>`)
+    .join('');
 
   el.innerHTML = `
     <div class="etapa-topo">
@@ -341,10 +359,16 @@ function renderEtapa4(el) {
         </label>
         <label>Resolução
           <select id="cfg-res">
-            <option value="1920,1080">1920×1080 (Full HD)</option>
-            <option value="1280,720">1280×720 (HD)</option>
-            <option value="2560,1440">2560×1440 (QHD)</option>
-            <option value="3840,2160">3840×2160 (4K)</option>
+            <optgroup label="Horizontal 16:9">
+              <option value="3840,2160">3840×2160 · 4K</option>
+              <option value="1920,1080" selected>1920×1080 · Full HD</option>
+              <option value="1280,720">1280×720 · HD</option>
+            </optgroup>
+            <optgroup label="Vertical 9:16 (Reels/TikTok)">
+              <option value="2160,3840">2160×3840 · 4K vertical</option>
+              <option value="1080,1920">1080×1920 · Full HD vertical</option>
+              <option value="720,1280">720×1280 · HD vertical</option>
+            </optgroup>
             <option value="custom">Personalizado…</option>
           </select>
         </label>
@@ -352,12 +376,13 @@ function renderEtapa4(el) {
         <label>Altura (custom) <input id="cfg-height" type="number" value="1080" min="240" step="16" /></label>
         <label>Segundos de margem/slide <input id="cfg-padding" type="number" value="0.8" min="0" step="0.1" /></label>
       </div>
+      <p class="msg-progresso">O vídeo sai como <strong>&lt;slug&gt;-&lt;largura&gt;x&lt;altura&gt;.mp4</strong> — formatos diferentes não se sobrescrevem.</p>
       <div id="area-progresso-video" hidden>
         <div class="msg-progresso" id="msg-progresso-video">Preparando…</div>
         <div class="barra-progresso"><div id="barra-progresso-video"></div></div>
       </div>
     </div>
-    ${video}`;
+    ${videos}`;
 }
 
 function setProgressoVideo(pct, texto) {
@@ -436,6 +461,7 @@ $('#etapa-container').addEventListener('click', async (ev) => {
       titulo: 'Novo slide',
       pontos: ['Ponto 1', 'Ponto 2'],
       narracao: '',
+      referencia_biblica: '',
       imagem_prompt: 'flat illustration, educational minimal style, no text',
     });
     return mudarEtapa(1);
@@ -555,7 +581,12 @@ async function carregarAulas() {
 $('#btn-nova-aula').onclick = async () => {
   const topico = $('#input-topico').value.trim();
   if (!topico) return toast('Digite um tópico.', true);
+  const slug = slugDe(topico);
   try {
+    const aulas = await api('/api/aulas');
+    if (aulas.some(a => a.slug === slug)) {
+      return toast(`Já existe uma aula com este tópico ("${slug}").`, true);
+    }
     const res = await api('/api/roteiro', { method: 'POST', body: JSON.stringify({ topico }) });
     $('#input-topico').value = '';
     await abrirAula(res.slug);
