@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { limparProjetosAntigosHtmlVideo } from './util.mjs';
 
 const execFileAsync = promisify(execFile);
 const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
@@ -23,6 +24,27 @@ async function rodarNodeAbs(script, args) {
   return stdout.trim();
 }
 
+// Retry com backoff linear (4s, 8s, ...) para etapas idempotentes (imagens,
+// narração e vídeo). As etapas pulam artefatos já existentes, então reexecutar
+// após uma falha transitória é seguro. PIPELINE_RETRIES controla o número de
+// tentativas (default 3); PIPELINE_RETRY_BASE_MS o intervalo base (default 4000).
+const RETRIES = Math.max(1, Number(process.env.PIPELINE_RETRIES) || 3);
+const RETRY_BASE_MS = Math.max(0, Number(process.env.PIPELINE_RETRY_BASE_MS) || 4000);
+
+async function rodarComRetry(fn, descricao) {
+  for (let tentativa = 1; tentativa <= RETRIES; tentativa++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (tentativa === RETRIES) throw e;
+      const esperaMs = RETRY_BASE_MS * tentativa;
+      const msg = String(e.message ?? '').split('\n')[0].slice(0, 200);
+      console.error(`  [retry] ${descricao} falhou (${msg}); nova tentativa em ${esperaMs / 1000}s (${tentativa}/${RETRIES - 1})`);
+      await new Promise((r) => setTimeout(r, esperaMs));
+    }
+  }
+}
+
 async function main() {
   const topico = process.argv[2];
   if (!topico) {
@@ -32,6 +54,8 @@ async function main() {
     console.error('  LLAMA_URL  - URL do llama-server (default http://127.0.0.1:8091)');
     console.error('  VOZ        - voz do edge-tts (default pt-BR-AntonioNeural)');
     console.error('  PULAR_ROTEIRO=1  - pula a geração do roteiro (usa roteiro.json existente)');
+    console.error('  PIPELINE_RETRIES  - tentativas por etapa (default 3)');
+    console.error('  PIPELINE_RETRY_BASE_MS  - backoff base em ms (default 4000)');
     process.exit(1);
   }
 
@@ -54,20 +78,27 @@ async function main() {
   }
 
   // Etapa 2: Imagens (ComfyUI)
-  const imagensOk = await rodarNode('gerar_imagens.mjs', [roteiroPath]);
+  const imagensOk = await rodarComRetry(() => rodarNode('gerar_imagens.mjs', [roteiroPath]), 'Etapa 2 (imagens)');
   console.log(`[2/4] ${JSON.parse(imagensOk).length} imagens geradas.`);
 
   // Etapa 3: Narração (edge-tts)
-  const narracaoOk = await rodarNode('gerar_narracao.mjs', [roteiroPath]);
+  const narracaoOk = await rodarComRetry(() => rodarNode('gerar_narracao.mjs', [roteiroPath]), 'Etapa 3 (narração)');
   console.log(`[3/4] ${JSON.parse(narracaoOk).length} arquivos de narração gerados.`);
 
   // Etapa 4: Vídeo (html-video)
   console.log('[4/4] Montando vídeo ...');
-  const result = await rodarNodeAbs(MONTA_VIDEO, [roteiroPath]);
+  const result = await rodarComRetry(() => rodarNodeAbs(MONTA_VIDEO, [roteiroPath]), 'Etapa 4 (vídeo)');
   const parsed = JSON.parse(result);
   console.log(`\n=== CONCLUÍDO ===`);
   console.log(`Aula: ${topico}`);
   console.log(`Vídeo: ${parsed.output_path}`);
+
+  try {
+    const removidos = await limparProjetosAntigosHtmlVideo(join(SCRIPTS_DIR, '..'));
+    if (removidos > 0) console.log(`Cache: ${removidos} projeto(s) antigo(s) removido(s) de .html-video/projects.`);
+  } catch (e) {
+    console.error(`[cache] limpeza de projetos antigos falhou: ${e.message}`);
+  }
 }
 
 main().catch((e) => {

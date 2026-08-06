@@ -5,6 +5,7 @@ const ETAPAS = [
   { n: 2, rotulo: 'Imagens' },
   { n: 3, rotulo: 'Narração' },
   { n: 4, rotulo: 'Vídeo' },
+  { n: 5, rotulo: 'PDF' },
 ];
 
 const estado = {
@@ -13,6 +14,7 @@ const estado = {
   roteiro: null,
   artefatos: null,
   config: null,
+  servicos: null,
   etapa: 1,
   jobAtivo: false,
   job: null,
@@ -20,10 +22,16 @@ const estado = {
   logs: [],
 };
 
-const NOME_ETAPA = { roteiro: 'Roteiro', imagens: 'Imagens', narracao: 'Narração', video: 'Vídeo' };
+const NOME_ETAPA = { roteiro: 'Roteiro', imagens: 'Imagens', narracao: 'Narração', video: 'Vídeo', pdf: 'PDF' };
 
+// Cópia browser-safe de esc/slugDe (util.mjs não pode ser importado no navegador:
+// depende de node:crypto). Mantidas em sincronia com scripts/util.mjs.
 const esc = (s) =>
-  String(s ?? '').replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>').replace(/"/g, '"');
+  String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 
 function slugDe(topico) {
   return topico
@@ -71,6 +79,65 @@ function adicionarLog(msg) {
 }
 
 // ---------------------------------------------------------------------------
+// Serviços (health check)
+// ---------------------------------------------------------------------------
+async function carregarServicos(force = false) {
+  try {
+    const dados = await api('/api/health');
+    estado.servicos = dados;
+    renderServicosBadge();
+    renderListaServicos();
+    return dados;
+  } catch (e) {
+    estado.servicos = { ok: false, servicos: null };
+    renderServicosBadge();
+    return estado.servicos;
+  }
+}
+
+function servicoOk(nome) {
+  return estado.servicos?.servicos?.[nome]?.ok === true;
+}
+
+function renderServicosBadge() {
+  const btn = $('#btn-servicos');
+  const s = estado.servicos;
+  btn.classList.toggle('ok', s?.ok === true);
+  btn.classList.toggle('erro', s?.ok === false);
+  btn.classList.toggle('carregando', !s);
+  btn.title = s
+    ? (s.ok ? 'Todos os serviços disponíveis' : 'Alguns serviços indisponíveis — clique para ver')
+    : 'Verificando serviços…';
+}
+
+function renderListaServicos() {
+  const el = $('#lista-servicos');
+  if (!el) return;
+  const s = estado.servicos;
+  if (!s?.servicos) {
+    el.innerHTML = '<div class="servico-item carregando"><span class="servico-status">…</span><span class="servico-nome">Verificando…</span></div>';
+    return;
+  }
+  const ordens = ['llama', 'comfy', 'edge_tts', 'ffmpeg', 'ffprobe', 'chromium'];
+  el.innerHTML = ordens
+    .map((k) => {
+      const v = s.servicos[k];
+      if (!v) return '';
+      const status = v.ok ? '✓' : '✕';
+      const detalhe = v.ok ? (v.versao || 'ok') : (v.erro || 'indisponível');
+      return `<div class="servico-item ${v.ok ? 'ok' : 'erro'}">
+        <span class="servico-status">${status}</span>
+        <div class="servico-info">
+          <span class="servico-nome">${esc(v.rotulo || k)}</span>
+          <span class="servico-detalhe">${esc(detalhe)}</span>
+        </div>
+      </div>`;
+    })
+    .join('')
+    + `<p class="servico-resumo">${s.ok ? 'Tudo pronto para rodar o pipeline.' : 'Alguns pré-requisitos estão indisponíveis.'}</p>`;
+}
+
+// ---------------------------------------------------------------------------
 // Navegação
 // ---------------------------------------------------------------------------
 function mostrarTela(nome) {
@@ -108,7 +175,8 @@ function statusEtapa(n) {
   if (n === 1) return 'ok';
   if (n === 2) return st.imagensCompletas ? 'ok' : st.slides.some((s) => s.imagem.existe) ? 'alerta' : 'erro';
   if (n === 3) return st.audioCompleto ? 'ok' : 'alerta';
-  return st.video.existe ? 'ok' : 'erro';
+  if (n === 4) return st.video.existe ? 'ok' : 'erro';
+  return st.pdf?.existe ? 'ok' : 'erro';
 }
 
 function renderStepper() {
@@ -140,18 +208,29 @@ function mudarEtapa(n) {
   if (n === 1) renderEtapa1(container);
   else if (n === 2) renderEtapa2(container);
   else if (n === 3) renderEtapa3(container);
-  else renderEtapa4(container);
+  else if (n === 4) renderEtapa4(container);
+  else renderEtapa5(container);
   sincronizarBotoes();
   renderStatusJob();
 }
 
 let _jobClearT = null;
 
+function tempoDesde(msIni) {
+  const s = Math.max(0, Math.floor((Date.now() - msIni) / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
 function renderStatusJob() {
   const el = $('#status-job');
   const job = estado.job;
   if (!job) {
     el.hidden = true;
+    atualizarIndicadorTopo(false);
     return;
   }
   el.hidden = false;
@@ -162,14 +241,111 @@ function renderStatusJob() {
     job.status === 'erro' ? '✕' : '🔄';
   const statusTexto = job.status === 'ok' ? `${rotulo} concluída com sucesso` :
     job.status === 'erro' ? `${rotulo} falhou` : `${rotulo} em andamento`;
+  const botaoCancelar =
+    job.status === 'rodando'
+      ? `<button class="btn btn-ghost btn-mini status-cancelar" id="btn-cancelar-job" title="Cancelar este job">✕ Cancelar</button>`
+      : '';
   el.innerHTML = `
     <span class="status-icone">${icone}</span>
     <div class="status-texto">
       <strong>${statusTexto}</strong>
       <span>${esc(job.msg || '')}</span>
+      ${job.status === 'rodando' && job.iniciadoEm ? `<span class="status-desde">em andamento há ${tempoDesde(job.iniciadoEm)}</span>` : ''}
       ${job.pct != null ? `<div class="barra-progresso status-barra"><div style="width:${Math.max(0, Math.min(100, job.pct))}%"></div></div>` : ''}
-    </div>`;
+    </div>
+    ${botaoCancelar}`;
+  atualizarIndicadorTopo(job.status === 'rodando');
 }
+
+function atualizarIndicadorTopo(ativo) {
+  const el = $('#job-topo');
+  if (!el) return;
+  el.hidden = !ativo;
+  if (ativo) {
+    const rotulo = NOME_ETAPA[estado.job?.etapa] || estado.job?.etapa || 'job';
+    el.textContent = `🔄 ${rotulo} em andamento`;
+  }
+}
+
+// Sondagem do estado do job no servidor: cobre o caso de a página ser recarregada
+// (o SSE não "reapresenta" um job já em andamento) ou de o SSE cair no meio.
+let _ultimoJobIdVisto = null;
+
+async function verJobServidor() {
+  let d;
+  try {
+    d = await api('/api/job');
+  } catch {
+    return;
+  }
+  if (d.ativo) {
+    estado.jobAtivo = true;
+    sincronizarBotoes();
+    if (!estado.job || estado.job.jobId !== d.jobId || estado.job.status !== 'rodando') {
+      estado.job = { jobId: d.jobId, etapa: d.etapa, status: 'rodando', msg: 'Em andamento…', iniciadoEm: d.iniciadoEm };
+      renderStatusJob();
+    } else {
+      atualizarIndicadorTopo(true);
+    }
+    return;
+  }
+
+  // Nenhum job ativo no servidor
+  atualizarIndicadorTopo(false);
+  if (estado.job?.status === 'rodando') {
+    // Job terminou sem o SSE estar conectado: mostra o último resultado
+    const ult = d.ultimo;
+    estado.jobAtivo = false;
+    sincronizarBotoes();
+    estado.job = {
+      etapa: ult?.etapa || estado.job.etapa,
+      status: ult ? (ult.ok ? 'ok' : 'erro') : 'erro',
+      msg: ult ? (ult.ok ? 'Processo finalizado com sucesso.' : ult.cancelado ? 'Job cancelado pelo usuário.' : 'Falha na execução — veja o log.') : 'Execução encerrada.',
+    };
+    renderStatusJob();
+    clearTimeout(_jobClearT);
+    _jobClearT = setTimeout(() => {
+      estado.job = null;
+      renderStatusJob();
+    }, 8000);
+    if (estado.tela === 'aula') {
+      carregarArtefatos();
+      mudarEtapa(estado.etapa);
+    }
+  } else if (!estado.job && d.ultimo && d.ultimo.jobId !== _ultimoJobIdVisto) {
+    // Página recarregada depois do fim: mostra o último resultado brevemente
+    _ultimoJobIdVisto = d.ultimo.jobId;
+    const ult = d.ultimo;
+    estado.job = {
+      etapa: ult.etapa,
+      status: ult.ok ? 'ok' : 'erro',
+      msg: ult.ok ? 'Processo finalizado com sucesso.' : ult.cancelado ? 'Job cancelado pelo usuário.' : 'Falha na execução — veja o log.',
+    };
+    renderStatusJob();
+    clearTimeout(_jobClearT);
+    _jobClearT = setTimeout(() => {
+      estado.job = null;
+      renderStatusJob();
+    }, 8000);
+    if (estado.tela === 'aula') {
+      carregarArtefatos();
+      mudarEtapa(estado.etapa);
+    }
+  }
+}
+
+async function cancelarJob() {
+  try {
+    await api('/api/cancelar-job', { method: 'POST' });
+    toast('Cancelando job em execução...');
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+$('#status-job').addEventListener('click', (ev) => {
+  if (ev.target.closest('#btn-cancelar-job')) cancelarJob();
+});
 
 function sincronizarBotoes() {
   document.querySelectorAll('#etapa-container .btn').forEach((b) => (b.disabled = estado.jobAtivo));
@@ -224,6 +400,10 @@ function renderEtapa1(el) {
       </div>
     </div>
     <div class="cartao campo-texto">
+      <label>Título da aula</label>
+      <input data-field="titulo_aula" value="${esc(r.titulo_aula)}" placeholder="Título da videoaula" />
+    </div>
+    <div class="cartao campo-texto">
       <label>Introdução (narrada)</label>
       <textarea data-field="introducao" rows="3">${esc(r.introducao)}</textarea>
     </div>
@@ -265,6 +445,7 @@ function renumerarSlides() {
 
 function lerRoteiroDoDOM() {
   const r = estado.roteiro;
+  r.titulo_aula = $('[data-field="titulo_aula"]')?.value ?? r.titulo_aula;
   r.introducao = $('[data-field="introducao"]')?.value ?? r.introducao;
   r.conclusao = $('[data-field="conclusao"]')?.value ?? r.conclusao;
   r.slides.forEach((s, i) => {
@@ -340,10 +521,14 @@ function renderEtapa3(el) {
       const badge = it.audio.existe
         ? (it.audio.desatualizado ? '<span class="badge alerta">texto alterado</span>' : '<span class="badge ok">ok</span>')
         : '<span class="badge erro">pendente</span>';
+      const download = it.audio.existe
+        ? `<a class="btn btn-mini" href="/media/${estado.slug}/${it.prefix}-narracao.mp3" download title="Baixar MP3">⬇</a>`
+        : '';
       return `<div class="item-audio">
         <span class="rotulo">${esc(it.rotulo)}</span>
         ${it.audio.existe ? `<audio controls preload="none" src="/media/${estado.slug}/${it.prefix}-narracao.mp3"></audio>` : '<span class="msg-progresso">sem áudio ainda</span>'}
         ${badge}
+        ${download}
         <button class="btn btn-mini regen" data-action="regen-narracao" data-slide="${it.id}">↻ regenerar</button>
       </div>`;
     })
@@ -353,10 +538,11 @@ function renderEtapa3(el) {
     <div class="etapa-topo">
       <h3>Narrações</h3>
       <div class="etapa-acoes">
-        <button class="btn btn-primario" data-action="gerar-todas-narracao">Gerar as que faltam</button>
+        <button class="btn" data-action="regenerar-desatualizados-narracao" title="Gera só os itens sem áudio ou com o texto alterado">↻ Regenerar desatualizados</button>
+        <button class="btn btn-primario" data-action="recriar-todas-narracao" title="Regenera todos os MP3, mesmo os já atualizados">🎙 Gerar todos</button>
       </div>
     </div>
-    <p class="msg-progresso">Voz: <strong>${esc(estado.config?.VOZ || 'pt-BR-AntonioNeural')}</strong>. Edite o texto na etapa Roteiro e use "↻ regenerar" para atualizar só o item.</p>
+    <p class="msg-progresso">Voz: <strong>${esc(estado.config?.VOZ || 'pt-BR-AntonioNeural')}</strong>. Textos inalterados são pulados (manifesto). Edite o texto na etapa Roteiro e use "↻ regenerar" para atualizar só o item.</p>
     ${lista}`;
 }
 
@@ -372,7 +558,10 @@ function renderEtapa4(el) {
   const videos = (st.videos || [])
     .map((v) => `
     <div class="video-item">
-      <div class="video-rotulo">${esc(v.arquivo)}</div>
+      <div class="video-rotulo">
+        <span>${esc(v.arquivo)}</span>
+        <a class="btn btn-mini" href="/media/${estado.slug}/${esc(v.arquivo)}" download title="Baixar MP4">⬇ download</a>
+      </div>
       <video class="player-video" controls src="/media/${estado.slug}/${esc(v.arquivo)}"></video>
     </div>`)
     .join('');
@@ -425,6 +614,35 @@ function setProgressoVideo(pct, texto) {
 }
 
 // ---------------------------------------------------------------------------
+// Etapa 5 — PDF de estudo
+// ---------------------------------------------------------------------------
+function renderEtapa5(el) {
+  const st = estado.artefatos;
+  const pdf = st.pdf;
+  const pdfHtml = pdf?.existe
+    ? `
+      <div class="cartao">
+        <div class="pdf-acoes">
+          <a class="btn btn-primario" href="/pdfs/${esc(pdf.arquivo)}" target="_blank" rel="noopener">📄 Abrir <strong>${esc(pdf.arquivo)}</strong></a>
+          <a class="btn" href="/pdfs/${esc(pdf.arquivo)}" download>⬇ download</a>
+        </div>
+        <p class="msg-progresso" style="margin-top:10px">Gerado em ${new Date(pdf.mtime).toLocaleString('pt-BR')} · ${(pdf.tamanho / 1024).toFixed(0)} KB · ${st.slides.length} slides</p>
+      </div>`
+    : '<p class="msg-progresso" style="color:var(--alerta)">PDF ainda não gerado.</p>';
+
+  el.innerHTML = `
+    <div class="etapa-topo">
+      <h3>PDF de estudo</h3>
+      <div class="etapa-acoes">
+        <button class="btn" data-action="regenerar-pdf">↻ Regenerar conteúdo complementar</button>
+        <button class="btn btn-primario" data-action="gerar-pdf">📄 Gerar PDF</button>
+      </div>
+    </div>
+    <p class="msg-progresso">Material de estudo gerado a partir do <strong>texto da narração</strong>. Cada slide é aprofundado com notas complementares e referências bíblicas adicionais (via llama-server) para preencher uma página inteira. Não depende de imagens nem áudio.</p>
+    ${pdfHtml}`;
+}
+
+// ---------------------------------------------------------------------------
 // Modal fullscreen de slides
 // ---------------------------------------------------------------------------
 function abrirModalSlide(i) {
@@ -473,6 +691,7 @@ async function salvarRoteiro() {
   try {
     await api(`/api/roteiro/${estado.slug}`, { method: 'PUT', body: JSON.stringify(estado.roteiro) });
     await carregarArtefatos();
+    $('#titulo-aula').textContent = estado.roteiro.titulo_aula;
     toast('Roteiro salvo. Áudios de textos alterados ficam marcados como desatualizados.');
     mudarEtapa(1);
   } catch (e) {
@@ -560,6 +779,12 @@ $('#etapa-container').addEventListener('click', async (ev) => {
     s.pontos.splice(Number(btn.dataset.ponto), 1);
     return mudarEtapa(1);
   }
+  if (acao === 'regen-imagem' || acao === 'gerar-todas-imagens' || acao === 'gerar-todas-imagens-recriar') {
+    if (estado.servicos && !servicoOk('comfy')) return toast('ComfyUI indisponível — não é possível gerar imagens.', true);
+  }
+  if (acao === 'regen-narracao' || acao === 'regenerar-desatualizados-narracao' || acao === 'recriar-todas-narracao') {
+    if (estado.servicos && !servicoOk('edge_tts')) return toast('edge-tts indisponível — não é possível gerar narração.', true);
+  }
   if (acao === 'regen-imagem') {
     return rodarJob(api(`/api/imagens/${estado.slug}`, { method: 'POST', body: JSON.stringify({ slideId, variar: true }) }), 'Imagem regenerada.');
   }
@@ -573,10 +798,17 @@ $('#etapa-container').addEventListener('click', async (ev) => {
   if (acao === 'regen-narracao') {
     return rodarJob(api(`/api/narracao/${estado.slug}`, { method: 'POST', body: JSON.stringify({ slideId }) }), 'Narração regenerada.');
   }
-  if (acao === 'gerar-todas-narracao') {
+  if (acao === 'regenerar-desatualizados-narracao') {
     return rodarJob(api(`/api/narracao/${estado.slug}`, { method: 'POST', body: JSON.stringify({}) }), 'Narrações atualizadas.');
   }
+  if (acao === 'recriar-todas-narracao') {
+    if (!confirm('Regenerar TODOS os MP3 de narração (inclusive os atualizados)? Custa tempo de TTS.')) return;
+    return rodarJob(api(`/api/narracao/${estado.slug}`, { method: 'POST', body: JSON.stringify({ todos: true }) }), 'Todas as narrações foram recriadas.');
+  }
   if (acao === 'montar-video') {
+    if (estado.servicos && (!servicoOk('ffmpeg') || !servicoOk('ffprobe') || !servicoOk('chromium'))) {
+      return toast('Falta ffmpeg/ffprobe ou Chromium — não é possível montar o vídeo.', true);
+    }
     const fps = $('#cfg-fps').value;
     const [w, h] = $('#cfg-res').value === 'custom' ? [$('#cfg-width').value, $('#cfg-height').value] : $('#cfg-res').value.split(',');
     const padding = $('#cfg-padding').value;
@@ -584,6 +816,22 @@ $('#etapa-container').addEventListener('click', async (ev) => {
     return rodarJob(
       api(`/api/video/${estado.slug}`, { method: 'POST', body: JSON.stringify({ fps: Number(fps), width: Number(w), height: Number(h), padding: Number(padding) }) }),
       'Vídeo montado com sucesso!',
+    );
+  }
+  if (acao === 'gerar-pdf' || acao === 'regenerar-pdf') {
+    if (estado.servicos && !servicoOk('llama')) {
+      if (acao === 'regenerar-pdf') return toast('llama-server indisponível — não é possível regenerar o conteúdo complementar.', true);
+      toast('llama-server indisponível — o PDF será gerado sem o conteúdo complementar.', true);
+    }
+  }
+  if (acao === 'gerar-pdf') {
+    return rodarJob(api(`/api/pdf/${estado.slug}`, { method: 'POST', body: JSON.stringify({}) }), 'PDF de estudo gerado!');
+  }
+  if (acao === 'regenerar-pdf') {
+    if (!confirm('Gerar novo conteúdo complementar (notas e referências) via llama-server e regenerar o PDF? Pode levar alguns minutos.')) return;
+    return rodarJob(
+      api(`/api/pdf/${estado.slug}`, { method: 'POST', body: JSON.stringify({ regenerarEnriquecimento: true }) }),
+      'PDF regenerado com novo conteúdo complementar!',
     );
   }
 });
@@ -612,16 +860,35 @@ $('#etapa-container').addEventListener('input', (ev) => {
 async function abrirConfig() {
   estado.config = await api('/api/config');
   document.querySelectorAll('#modal-config [data-cfg]').forEach((inp) => {
-    inp.value = estado.config[inp.dataset.cfg] ?? '';
+    const v = estado.config[inp.dataset.cfg];
+    if (inp.type === 'checkbox') inp.checked = v === '1' || v === true || v === 1;
+    else inp.value = v ?? '';
   });
   $('#modal-config').hidden = false;
 }
 
 $('#btn-config').onclick = abrirConfig;
 $('#btn-fechar-config').onclick = () => ($('#modal-config').hidden = true);
+
+// ---------------------------------------------------------------------------
+// Serviços (modal de status)
+// ---------------------------------------------------------------------------
+$('#btn-servicos').onclick = () => {
+  $('#modal-servicos').hidden = false;
+  renderListaServicos();
+  if (!estado.servicos) carregarServicos();
+};
+$('#btn-fechar-servicos').onclick = () => ($('#modal-servicos').hidden = true);
+$('#btn-recarregar-servicos').onclick = async () => {
+  $('#btn-recarregar-servicos').disabled = true;
+  await carregarServicos(true);
+  $('#btn-recarregar-servicos').disabled = false;
+};
 $('#btn-salvar-config').onclick = async () => {
   const novo = {};
-  document.querySelectorAll('#modal-config [data-cfg]').forEach((inp) => (novo[inp.dataset.cfg] = inp.value));
+  document.querySelectorAll('#modal-config [data-cfg]').forEach((inp) => {
+    novo[inp.dataset.cfg] = inp.type === 'checkbox' ? (inp.checked ? '1' : '') : inp.value;
+  });
   await api('/api/config', { method: 'PUT', body: JSON.stringify(novo) });
   estado.config = novo;
   $('#modal-config').hidden = true;
@@ -647,14 +914,34 @@ async function carregarAulas() {
       a.imagensCompletas ? '<span class="badge ok">✓ imagens</span>' : '<span class="badge alerta">imagens</span>',
       a.audioCompleto ? '<span class="badge ok">✓ áudio</span>' : '<span class="badge alerta">áudio</span>',
       a.videoPronto ? '<span class="badge ok">✓ vídeo</span>' : '',
+      a.pdfPronto ? '<span class="badge ok">✓ PDF</span>' : '',
     ].join('');
+    const thumb = a.thumbnail
+      ? `<img class="card-thumb" src="${a.thumbnail}" alt="" loading="lazy" />`
+      : `<div class="card-thumb card-thumb-placeholder">✦</div>`;
     card.innerHTML = `
+      <div class="card-thumb-wrap">${thumb}<button class="btn-excluir" data-slug="${esc(a.slug)}" title="Excluir aula">🗑</button></div>
       <h3>${esc(a.titulo_aula)}</h3>
       <div class="meta">${a.slides} slides</div>
       <div class="badges">${badges}</div>`;
     el.appendChild(card);
   }
 }
+
+$('#lista-aulas').addEventListener('click', async (ev) => {
+  const btn = ev.target.closest('.btn-excluir');
+  if (!btn) return;
+  ev.stopPropagation();
+  const slug = btn.dataset.slug;
+  if (!confirm(`Excluir a aula "${slug}"?\n\nIsso apaga o roteiro, imagens, narrações, vídeos e o PDF, além do cache de render. Essa ação não pode ser desfeita.`)) return;
+  try {
+    await api(`/api/aulas/${slug}`, { method: 'DELETE' });
+    toast('Aula excluída.');
+    carregarAulas();
+  } catch (e) {
+    toast(e.message, true);
+  }
+});
 
 $('#btn-nova-aula').onclick = async () => {
   const topico = $('#input-topico').value.trim();
@@ -664,6 +951,10 @@ $('#btn-nova-aula').onclick = async () => {
     const aulas = await api('/api/aulas');
     if (aulas.some(a => a.slug === slug)) {
       return toast(`Já existe uma aula com este tópico ("${slug}").`, true);
+    }
+    if (estado.servicos && !servicoOk('llama')) {
+      toast('llama-server indisponível — o roteiro não será gerado. Inicie-o antes.', true);
+      return;
     }
     const res = await api('/api/roteiro', { method: 'POST', body: JSON.stringify({ topico }) });
     $('#input-topico').value = '';
@@ -679,6 +970,22 @@ $('#input-topico').addEventListener('keydown', (ev) => {
 
 $('#btn-voltar').onclick = () => mostrarTela('dashboard');
 $('#btn-inicio').onclick = () => mostrarTela('dashboard');
+$('#btn-excluir-aula').onclick = async () => {
+  const slug = estado.slug;
+  if (!slug) return;
+  if (!confirm(`Excluir a aula "${estado.roteiro?.titulo_aula || slug}"?\n\nIsso apaga o roteiro, imagens, narrações, vídeos e o PDF, além do cache de render. Essa ação não pode ser desfeita.`)) return;
+  if (estado.jobAtivo) return toast('Aguarde o job atual terminar.', true);
+  try {
+    await api(`/api/aulas/${slug}`, { method: 'DELETE' });
+    estado.slug = null;
+    estado.roteiro = null;
+    estado.artefatos = null;
+    toast('Aula excluída.');
+    mostrarTela('dashboard');
+  } catch (e) {
+    toast(e.message, true);
+  }
+};
 $('#btn-atualizar').onclick = async () => {
   if (estado.jobAtivo) return toast('Aguarde o job atual terminar.', true);
   try {
@@ -719,7 +1026,7 @@ sse.addEventListener('progresso', (ev) => {
     estado.jobAtivo = true;
     sincronizarBotoes();
     clearTimeout(_jobClearT);
-    estado.job = { etapa: msg.etapa, status: 'rodando', msg: 'Preparando…' };
+    estado.job = { jobId: msg.jobId, etapa: msg.etapa, status: 'rodando', msg: 'Preparando…', iniciadoEm: msg.iniciadoEm || Date.now() };
     renderStatusJob();
   }
   if (msg.tipo === 'progress') {
@@ -748,11 +1055,12 @@ sse.addEventListener('progresso', (ev) => {
   if (msg.tipo === 'fim') {
     estado.jobAtivo = false;
     sincronizarBotoes();
+    atualizarIndicadorTopo(false);
     if (estado.etapa === 4) setProgressoVideo(msg.ok ? 100 : 0, msg.ok ? 'Vídeo pronto!' : 'Falha na montagem');
     estado.job = {
       etapa: msg.etapa,
       status: msg.ok ? 'ok' : 'erro',
-      msg: msg.ok ? 'Processo finalizado com sucesso.' : 'Falha na execução — veja o log.',
+      msg: msg.ok ? 'Processo finalizado com sucesso.' : msg.cancelado ? 'Job cancelado pelo usuário.' : 'Falha na execução — veja o log.',
     };
     renderStatusJob();
     clearTimeout(_jobClearT);
@@ -779,5 +1087,15 @@ sse.addEventListener('progresso', (ev) => {
 // ---------------------------------------------------------------------------
 (async function init() {
   estado.config = await api('/api/config');
+  carregarServicos();
+  setInterval(carregarServicos, 30000);
+  verJobServidor();
+  setInterval(verJobServidor, 5000);
+  setInterval(() => {
+    if (estado.job?.status === 'rodando' && estado.job.iniciadoEm) {
+      const el = document.querySelector('.status-desde');
+      if (el) el.textContent = `em andamento há ${tempoDesde(estado.job.iniciadoEm)}`;
+    }
+  }, 1000);
   mostrarTela('dashboard');
 })();

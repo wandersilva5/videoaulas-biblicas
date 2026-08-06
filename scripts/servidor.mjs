@@ -1,15 +1,16 @@
 import { createServer } from 'node:http';
-import { readFile, writeFile, readdir, mkdir, unlink, rename } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, unlink, rename, rm } from 'node:fs/promises';
 import { existsSync, createReadStream, statSync } from 'node:fs';
 import { join, dirname, basename, extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { slugDe, hashDe, esc, MIME, itensDoRoteiro, limparProjetosAntigosHtmlVideo } from './util.mjs';
 
 const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SCRIPTS_DIR, '..');
 const WEB_DIR = join(ROOT, 'web');
 const OUTPUT_DIR = join(ROOT, 'output');
+const PDFS_DIR = join(ROOT, 'pdfs');
 const CONFIG_PATH = join(ROOT, '.config.json');
 
 const DEFAULTS = {
@@ -21,7 +22,10 @@ const DEFAULTS = {
   ZIMAGE_VAE: 'FLUX-Anime-VAE-B2.safetensors',
   ZIMAGE_LORA: 'z-image\\z-image-anime-01.safetensors',
   VOZ: 'pt-BR-AntonioNeural',
-  PORTA: '5173',
+  PORTA: '5176',
+  LLAMA_EXE: 'E:\\llama.cpp\\llama-server.exe',
+  LLAMA_MODEL: 'E:\\llama.cpp\\models\\Qwen3.5-9B-Q4_K_M.gguf',
+  COMFY_DIR: 'D:\\ComfyUI_windows_portable',
 };
 
 async function carregarConfig() {
@@ -43,29 +47,6 @@ async function salvarConfig() {
   await writeFile(CONFIG_PATH, JSON.stringify(CONFIG, null, 2), 'utf8');
 }
 
-const slugDe = (t) =>
-  t
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-
-const hashDe = (t) => createHash('sha1').update(t ?? '').digest('hex');
-
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.png': 'image/png',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-  '.mp3': 'audio/mpeg',
-  '.mp4': 'video/mp4',
-  '.webm': 'video/webm',
-};
-
 // ---------------------------------------------------------------------------
 // Fila de eventos (SSE)
 // ---------------------------------------------------------------------------
@@ -86,6 +67,34 @@ function broadcast(msg) {
 // Executor de jobs (um por vez)
 // ---------------------------------------------------------------------------
 let jobAtual = null;
+let ultimoJob = null;
+
+function cancelarJob() {
+  if (!jobAtual) return { cancelado: false, erro: 'Nenhum job em execução' };
+  const j = jobAtual;
+  j.cancelado = true;
+  broadcast({ jobId: j.jobId, etapa: j.etapa, tipo: 'erro', linha: 'Cancelado pelo usuário. Encerrando processo...', ts: Date.now() });
+  try {
+    j.child.kill();
+  } catch {
+    /* processo já encerrado */
+  }
+  return { cancelado: true, etapa: j.etapa };
+}
+
+/** Estado do job para o frontend: job ativo (com horário de início) + último resultado. */
+function estadoDoJob() {
+  return {
+    ativo: !!jobAtual,
+    etapa: jobAtual?.etapa ?? null,
+    jobId: jobAtual?.jobId ?? null,
+    iniciadoEm: jobAtual?.iniciadoEm ?? null,
+    ultimo: ultimoJob,
+  };
+}
+
+const statusDeErroJob = (e) =>
+  e.code === 'JOB_ATIVO' ? 409 : e.code === 'JOB_CANCELADO' ? 499 : 500;
 
 function runJob({ etapa, args, env = {} }) {
   return new Promise((resolve, reject) => {
@@ -96,9 +105,10 @@ function runJob({ etapa, args, env = {} }) {
       return;
     }
     const jobId = `${etapa}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-    const emit = (tipo, linha) => broadcast({ jobId, etapa, tipo, linha, ts: Date.now() });
+    const iniciadoEm = Date.now();
+    const emit = (tipo, linha) => broadcast({ jobId, etapa, tipo, linha, ts: Date.now(), iniciadoEm });
     const child = spawn(process.execPath, args, { env: { ...process.env, ...CONFIG, ...env } });
-    jobAtual = { jobId, etapa, child };
+    jobAtual = { jobId, etapa, child, cancelado: false, iniciadoEm };
     let stdout = '';
     let stderr = '';
     emit('inicio', `Iniciando etapa: ${etapa} ...`);
@@ -123,19 +133,29 @@ function runJob({ etapa, args, env = {} }) {
     });
     child.on('error', (err) => {
       jobAtual = null;
+      ultimoJob = { jobId, etapa, ok: false, cancelado: false, terminadoEm: Date.now(), erro: err.message };
       emit('erro', `Falha ao iniciar processo: ${err.message}`);
       broadcast({ jobId, etapa, tipo: 'fim', ok: false, ts: Date.now() });
       reject(err);
     });
     child.on('exit', (code) => {
+      const j = jobAtual;
       jobAtual = null;
+      const cancelado = j?.cancelado === true;
+      ultimoJob = { jobId, etapa, ok: code === 0 && !cancelado, cancelado, terminadoEm: Date.now() };
       let resultado = null;
       try {
         resultado = JSON.parse(stdout.trim());
       } catch {
         /* stdout não é JSON */
       }
-      broadcast({ jobId, etapa, tipo: 'fim', ok: code === 0, resultado, ts: Date.now() });
+      broadcast({ jobId, etapa, tipo: 'fim', ok: code === 0 && !cancelado, cancelado, resultado, ts: Date.now() });
+      if (cancelado) {
+        const err = new Error(`Job ${etapa} cancelado pelo usuário.`);
+        err.code = 'JOB_CANCELADO';
+        reject(err);
+        return;
+      }
       if (code === 0) {
         resolve(resultado ?? {});
       } else {
@@ -157,21 +177,6 @@ function runJob({ etapa, args, env = {} }) {
 // ---------------------------------------------------------------------------
 async function lerRoteiro(slug) {
   return JSON.parse(await readFile(join(OUTPUT_DIR, slug, 'roteiro.json'), 'utf8'));
-}
-
-function itensDoRoteiro(roteiro) {
-  const total = roteiro.slides.length + 2;
-  return [
-    { id: 'intro', prefix: '00-intro', texto: roteiro.introducao },
-    ...roteiro.slides.map((s, i) => ({
-      id: s.id,
-      prefix: String(i + 1).padStart(2, '0'),
-      texto: s.narracao,
-      prompt: s.imagem_prompt,
-      idx: i,
-    })),
-    { id: 'conclusao', prefix: `${String(total - 1).padStart(2, '0')}-conclusao`, texto: roteiro.conclusao },
-  ];
 }
 
 async function lerManifesto(slug) {
@@ -236,6 +241,7 @@ async function artefatos(slug) {
     })
     .sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
   const ultimo = videos[0] ?? null;
+  const pdfPath = join(PDFS_DIR, `${slug}-estudo.pdf`);
   return {
     slug,
     roteiroMtime,
@@ -249,6 +255,12 @@ async function artefatos(slug) {
       arquivo: ultimo?.arquivo ?? null,
     },
     videos,
+    pdf: {
+      existe: existsSync(pdfPath),
+      mtime: mtimeDe(pdfPath),
+      tamanho: existsSync(pdfPath) ? statSync(pdfPath).size : 0,
+      arquivo: `${slug}-estudo.pdf`,
+    },
     audioCompleto: [itens[0], ...itens.slice(1, -1), itens[itens.length - 1]].every((it) => audioDe(it).existe),
     imagensCompletas: slides.every((s) => s.imagem.existe),
   };
@@ -293,6 +305,33 @@ function ehSlugValido(s) {
   return /^[a-z0-9-]+$/.test(s);
 }
 
+async function limparProjetosHtmlVideo(slug) {
+  const projDir = join(ROOT, '.html-video', 'projects');
+  if (!existsSync(projDir)) return 0;
+  const dirs = await readdir(projDir, { withFileTypes: true });
+  let removidos = 0;
+  const ehDaAula = (pth) => {
+    const s = String(pth ?? '');
+    return s.includes(`output\\${slug}\\`) || s.includes(`output/${slug}/`);
+  };
+  for (const d of dirs) {
+    if (!d.isDirectory()) continue;
+    const pj = join(projDir, d.name, 'project.json');
+    if (!existsSync(pj)) continue;
+    try {
+      const p = JSON.parse(await readFile(pj, 'utf8'));
+      const caminhos = [p.lastOutputMp4Path, ...(p.exports || []).map((e) => e.path)].filter(Boolean);
+      if (caminhos.some(ehDaAula)) {
+        await rm(join(projDir, d.name), { recursive: true, force: true });
+        removidos++;
+      }
+    } catch {
+      /* projeto ilegível — ignora */
+    }
+  }
+  return removidos;
+}
+
 async function listarAulas() {
   if (!existsSync(OUTPUT_DIR)) return [];
   const dirs = (await readdir(OUTPUT_DIR, { withFileTypes: true })).filter((d) => d.isDirectory());
@@ -311,6 +350,8 @@ async function listarAulas() {
         audioCompleto: st.audioCompleto,
         imagensCompletas: st.imagensCompletas,
         videoPronto: st.video.existe,
+        pdfPronto: st.pdf.existe,
+        thumbnail: existsSync(join(OUTPUT_DIR, d.name, 'slide-01.png')) ? `/media/${d.name}/slide-01.png` : null,
       });
     } catch (e) {
       console.error(`[listarAulas] Erro ao ler ${d.name}/roteiro.json:`, e.message);
@@ -318,6 +359,103 @@ async function listarAulas() {
   }
   aulas.sort((a, b) => (a.slug < b.slug ? 1 : -1));
   return aulas;
+}
+
+// ---------------------------------------------------------------------------
+// Health check dos serviços externos (GET /api/health)
+// ---------------------------------------------------------------------------
+const NOMES_SERVICO = {
+  llama: 'llama-server (roteiro/enriquecimento)',
+  comfy: 'ComfyUI (imagens)',
+  edge_tts: 'edge-tts (narração)',
+  ffmpeg: 'ffmpeg (vídeo)',
+  ffprobe: 'ffprobe (vídeo)',
+  chromium: 'Chromium (Playwright)',
+};
+
+function checarHttp(url, timeoutMs = 3000) {
+  return new Promise((resolve) => {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), timeoutMs);
+    fetch(url, { signal: ctl.signal })
+      .then((r) => resolve({ ok: r.status < 500, erro: r.ok ? null : `HTTP ${r.status}`, versao: null }))
+      .catch((e) =>
+        resolve({ ok: false, erro: e.name === 'AbortError' ? 'timeout' : e.cause?.code || e.message, versao: null }),
+      )
+      .finally(() => clearTimeout(t));
+  });
+}
+
+function checarComando(nome, args = [], maxMs = 8000) {
+  return new Promise((resolve) => {
+    let proc = null;
+    const t = setTimeout(() => {
+      proc?.kill();
+      resolve({ ok: false, erro: 'timeout', versao: null });
+    }, maxMs);
+    proc = spawn(nome, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let saida = '';
+    proc.stdout.on('data', (d) => (saida += d.toString()));
+    proc.on('error', (e) => {
+      clearTimeout(t);
+      resolve({ ok: false, erro: e.code || e.message, versao: null });
+    });
+    proc.on('exit', (code) => {
+      clearTimeout(t);
+      const primeira = saida.trim().split(/\r?\n/)[0] || null;
+      resolve({ ok: code === 0, erro: code === 0 ? null : `exit ${code}`, versao: primeira });
+    });
+  });
+}
+
+async function checarChromium() {
+  try {
+    const { chromium } = await import('playwright');
+    const exe = chromium.executablePath();
+    if (!exe || !existsSync(exe)) return { ok: false, erro: 'chromium não instalado no cache do Playwright', versao: null };
+    return { ok: true, erro: null, versao: basename(dirname(exe)) };
+  } catch (e) {
+    return { ok: false, erro: e.message, versao: null };
+  }
+}
+
+async function statusDosServicos() {
+  const llmBase = String(CONFIG.LLAMA_URL || '').replace(/\/+$/, '');
+  const comfyBase = String(CONFIG.COMFY_URL || '').replace(/\/+$/, '');
+  const [llama, comfy, edge_tts, ffmpeg, ffprobe, chromium] = await Promise.all([
+    checarHttp(`${llmBase}/v1/models`),
+    checarHttp(`${comfyBase}/system_stats`),
+    checarComando('edge-tts', ['--version']),
+    checarComando('ffmpeg', ['-version']),
+    checarComando('ffprobe', ['-version']),
+    checarChromium(),
+  ]);
+  const servicos = { llama, comfy, edge_tts, ffmpeg, ffprobe, chromium };
+  const nomes = Object.keys(servicos);
+  return {
+    ok: nomes.every((k) => servicos[k].ok),
+    checado_em: new Date().toISOString(),
+    servicos: Object.fromEntries(nomes.map((k) => [k, { ...servicos[k], rotulo: NOMES_SERVICO[k] }])),
+  };
+}
+
+let healthCache = { ts: 0, dados: null };
+let healthEmAndamento = null;
+
+async function rotaHealth() {
+  const agora = Date.now();
+  if (healthCache.dados && agora - healthCache.ts < 8000) return healthCache.dados;
+  if (!healthEmAndamento) {
+    healthEmAndamento = statusDosServicos()
+      .then((dados) => {
+        healthCache = { ts: Date.now(), dados };
+        return dados;
+      })
+      .finally(() => {
+        healthEmAndamento = null;
+      });
+  }
+  return healthEmAndamento;
 }
 
 // ---------------------------------------------------------------------------
@@ -351,6 +489,15 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // ---- PDFs de estudo (pdfs/) ----
+    if (path.startsWith('/pdfs/')) {
+      const [, , fname] = path.split('/');
+      if (!fname || fname.includes('/')) return json(res, 400, { erro: 'Caminho inválido' });
+      const alvo = join(PDFS_DIR, basename(fname));
+      if (!dentroDe(PDFS_DIR, alvo)) return json(res, 400, { erro: 'Caminho inválido' });
+      return arquivo(res, alvo);
+    }
+
     // ---- Arquivos de mídia (output/<slug>/...) ----
     if (path.startsWith('/media/')) {
       const [, , slug, ...resto] = path.split('/');
@@ -380,6 +527,19 @@ const server = createServer(async (req, res) => {
       return json(res, 200, await listarAulas());
     }
 
+    // --- DELETE /api/aulas/:slug — apaga aula e artefatos derivados ---
+    if (recurso === 'aulas' && req.method === 'DELETE') {
+      if (!slug || !ehSlugValido(slug)) return json(res, 400, { erro: 'Slug inválido' });
+      const outDir = join(OUTPUT_DIR, slug);
+      if (!existsSync(outDir)) return json(res, 404, { erro: 'Aula não encontrada' });
+      const pdf = join(PDFS_DIR, `${slug}-estudo.pdf`);
+      await rm(outDir, { recursive: true, force: true });
+      if (existsSync(pdf)) await rm(pdf, { force: true });
+      const projetos = await limparProjetosHtmlVideo(slug);
+      console.error(`[aulas] Excluída "${slug}" (${projetos} projeto(s) de render removidos)`);
+      return json(res, 200, { ok: true, removidos_html_video: projetos });
+    }
+
     if (recurso === 'config') {
       if (req.method === 'GET') return json(res, 200, CONFIG);
       if (req.method === 'PUT') {
@@ -390,6 +550,21 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    if (recurso === 'health' && req.method === 'GET') {
+      return json(res, 200, await rotaHealth());
+    }
+
+    // --- Cancelamento de job em execução ---
+    if (recurso === 'cancelar-job' && req.method === 'POST') {
+      return json(res, 200, cancelarJob());
+    }
+
+    // --- Estado do job (ativo + último resultado) — permite o frontend saber
+    //     que há um job rodando mesmo após recarregar a página ---
+    if (recurso === 'job' && req.method === 'GET') {
+      return json(res, 200, estadoDoJob());
+    }
+
     // --- Roteiro (POST cria nova aula — não tem slug ainda) ---
     if (recurso === 'roteiro' && req.method === 'POST') {
       const body = await lerBody(req);
@@ -397,7 +572,7 @@ const server = createServer(async (req, res) => {
       try {
         await runJob({ etapa: 'roteiro', args: [join(SCRIPTS_DIR, 'gerar_roteiro.mjs'), body.topico] });
       } catch (e) {
-        return json(res, e.code === 'JOB_ATIVO' ? 409 : 500, { erro: e.message });
+        return json(res, statusDeErroJob(e), { erro: e.message });
       }
       const novoSlug = slugDe(body.topico);
       const roteiro = await lerRoteiro(novoSlug);
@@ -464,7 +639,7 @@ const server = createServer(async (req, res) => {
         for (const { original, backup } of backups) {
           if (existsSync(backup)) await rename(backup, original);
         }
-        return json(res, e.code === 'JOB_ATIVO' ? 409 : 500, { erro: e.message });
+        return json(res, statusDeErroJob(e), { erro: e.message });
       }
       const manifest = await lerManifesto(slug);
       const alvos = body.slideId ? [body.slideId] : roteiro.slides.map((s) => s.id);
@@ -482,10 +657,11 @@ const server = createServer(async (req, res) => {
       const roteiro = await lerRoteiro(slug);
       const args = [join(SCRIPTS_DIR, 'gerar_narracao.mjs'), roteiroPath];
       if (body.slideId) args.push('--apenas', body.slideId);
+      else if (body.todos) args.push('--todos');
       try {
         await runJob({ etapa: 'narracao', args });
       } catch (e) {
-        return json(res, e.code === 'JOB_ATIVO' ? 409 : 500, { erro: e.message });
+        return json(res, statusDeErroJob(e), { erro: e.message });
       }
       const manifest = await lerManifesto(slug);
       const itens = itensDoRoteiro(roteiro);
@@ -518,10 +694,31 @@ const server = createServer(async (req, res) => {
       try {
         await runJob({ etapa: 'video', args: [join(SCRIPTS_DIR, 'montar_video.mjs'), roteiroPath], env });
       } catch (e) {
-        return json(res, e.code === 'JOB_ATIVO' ? 409 : 500, { erro: e.message });
+        return json(res, statusDeErroJob(e), { erro: e.message });
       }
       const arquivo = `${slug}-${String(body.width ?? 1920)}x${String(body.height ?? 1080)}.mp4`;
       return json(res, 200, { ok: true, output_path: arquivo, url: `/media/${slug}/${arquivo}` });
+    }
+
+    // --- PDF de estudo ---
+    if (recurso === 'pdf' && req.method === 'POST') {
+      if (!existsSync(roteiroPath)) return json(res, 404, { erro: 'Roteiro não existe' });
+      const body = await lerBody(req);
+      if (body.regenerarEnriquecimento) {
+        try {
+          await unlink(join(OUTPUT_DIR, slug, 'enriquecimento.json'));
+          console.error(`[pdf] cache de enriquecimento removido (${slug})`);
+        } catch {
+          /* cache não existia */
+        }
+      }
+      try {
+        await runJob({ etapa: 'pdf', args: [join(SCRIPTS_DIR, 'gerar_pdf.mjs'), roteiroPath] });
+      } catch (e) {
+        return json(res, statusDeErroJob(e), { erro: e.message });
+      }
+      const arquivo = `${slug}-estudo.pdf`;
+      return json(res, 200, { ok: true, arquivo, url: `/pdfs/${arquivo}` });
     }
 
     return json(res, 404, { erro: 'Rota não encontrada' });
@@ -532,6 +729,12 @@ const server = createServer(async (req, res) => {
 });
 
 await mkdir(OUTPUT_DIR, { recursive: true });
+try {
+  const removidos = await limparProjetosAntigosHtmlVideo(ROOT);
+  if (removidos > 0) console.error(`[cache] ${removidos} projeto(s) antigo(s) removido(s) de .html-video/projects`);
+} catch (e) {
+  console.error(`[cache] limpeza de projetos antigos falhou: ${e.message}`);
+}
 server.listen(Number(CONFIG.PORTA), () => {
   console.log(`Servidor rodando em http://localhost:${CONFIG.PORTA}`);
 });

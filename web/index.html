@@ -14,6 +14,8 @@
         <span>Estúdio de Videoaulas</span>
       </button>
       <div class="topo-acoes">
+        <span class="job-topo" id="job-topo" hidden></span>
+        <button class="btn btn-ghost" id="btn-servicos" title="Status dos serviços">◉ Serviços</button>
         <button class="btn btn-ghost" id="btn-config" title="Configurações">⚙</button>
       </div>
     </div>
@@ -41,6 +43,7 @@
             <button class="btn btn-ghost" id="btn-voltar">← Aulas</button>
             <h2 id="titulo-aula"></h2>
             <button class="btn btn-ghost btn-mini" id="btn-atualizar" title="Recarregar roteiro e artefatos">↻ Atualizar</button>
+            <button class="btn btn-ghost btn-mini btn-perigo" id="btn-excluir-aula" title="Excluir esta aula">🗑</button>
             <div class="spacer"></div>
             <div id="dica-proximo" class="dica"></div>
           </div>
@@ -58,6 +61,19 @@
     </section>
   </main>
 
+  <!-- Modal de serviços -->
+  <div id="modal-servicos" class="modal" hidden>
+    <div class="modal-janela">
+      <h3>Serviços</h3>
+      <p class="modal-subtitulo">Verifique os pré-requisitos do pipeline antes de rodar as etapas.</p>
+      <div id="lista-servicos" class="servicos"></div>
+      <div class="modal-acoes">
+        <button class="btn btn-ghost" id="btn-fechar-servicos">Fechar</button>
+        <button class="btn btn-primario" id="btn-recarregar-servicos">↻ Verificar novamente</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal de configurações -->
   <div id="modal-config" class="modal" hidden>
     <div class="modal-janela">
@@ -71,6 +87,17 @@
       <label>ZIMAGE_LORA <input data-cfg="ZIMAGE_LORA" type="text" /></label>
       <label>VOZ (edge-tts) <input data-cfg="VOZ" type="text" /></label>
       <label>PORTA <input data-cfg="PORTA" type="number" /></label>
+      <label>LLAMA_EXE (caminho do llama-server) <input data-cfg="LLAMA_EXE" type="text" /></label>
+      <label>LLAMA_MODEL (modelo do llama-server) <input data-cfg="LLAMA_MODEL" type="text" /></label>
+      <label>COMFY_DIR (pasta do ComfyUI) <input data-cfg="COMFY_DIR" type="text" /></label>
+      <label>KREA2_SEED_BASE (seed das imagens) <input data-cfg="KREA2_SEED_BASE" type="number" /></label>
+      <label>COMFY_TIMEOUT_MS (timeout por imagem, ms) <input data-cfg="COMFY_TIMEOUT_MS" type="number" /></label>
+      <label class="cfg-check"><input data-cfg="PULAR_ROTEIRO" type="checkbox" /> Pular geração do roteiro se já existir</label>
+      <label class="cfg-check"><input data-cfg="PULAR_ENRIQUECIMENTO" type="checkbox" /> Pular conteúdo complementar do PDF</label>
+      <label>VIDEO_FPS <input data-cfg="VIDEO_FPS" type="number" min="1" /></label>
+      <label>VIDEO_WIDTH <input data-cfg="VIDEO_WIDTH" type="number" min="320" /></label>
+      <label>VIDEO_HEIGHT <input data-cfg="VIDEO_HEIGHT" type="number" min="240" /></label>
+      <label>VIDEO_PADDING (pausa entre slides, s) <input data-cfg="VIDEO_PADDING" type="number" min="0" step="0.1" /></label>
       <div class="modal-acoes">
         <button class="btn btn-ghost" id="btn-fechar-config">Fechar</button>
         <button class="btn btn-primario" id="btn-salvar-config">Salvar</button>

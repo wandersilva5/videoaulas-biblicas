@@ -2,6 +2,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { request as httpRequest } from 'node:http';
+import { slugDe, modeloLLama } from './util.mjs';
 
 const LLAMA_URL = process.env.LLAMA_URL || 'http://127.0.0.1:8091';
 
@@ -75,15 +76,16 @@ export async function gerarRoteiro(topico) {
   let ultimaRota = null;
 
   for (let tentativa = 1; tentativa <= maxTentativas; tentativa++) {
-    if (tentativa > 1) console.error(`  Roteiro com menos de ${MIN_SLIDES} slides; regerando (tentativa ${tentativa}/${maxTentativas}) ...`);
+    if (tentativa > 1) console.error(`  Roteiro reprovado na validação; regerando (tentativa ${tentativa}/${maxTentativas}) ...`);
     const body = {
+      model: modeloLLama(),
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         {
           role: 'user',
           content:
             tentativa > 1
-              ? `Crie a videoaula sobre: ${topico}\n\nATENÇÃO: é obrigatório gerar no mínimo ${MIN_SLIDES} slides. A tentativa anterior foi rejeitada por ter menos slides que o mínimo.`
+              ? `Crie a videoaula sobre: ${topico}\n\nATENÇÃO: a tentativa anterior foi rejeitada por não passar na validação. É obrigatório gerar no mínimo ${MIN_SLIDES} slides, cada um com id no padrão "slide-NN", narração de 60-90 palavras e campo "imagem_prompt" preenchido.`
               : `Crie a videoaula sobre: ${topico}`,
         },
       ],
@@ -107,15 +109,74 @@ export async function gerarRoteiro(topico) {
     const content = data.choices?.[0]?.message?.content ?? '';
     const roteiro = extrairJson(content);
 
-    if (Array.isArray(roteiro.slides) && roteiro.slides.length >= MIN_SLIDES) {
-      return roteiro;
-    }
+    const reparos = repararRoteiro(roteiro);
+    const { valido, erros, avisos } = validarRoteiro(roteiro, { minSlides: MIN_SLIDES });
+
+    if (reparos > 0) console.error(`  Roteiro normalizado: ${reparos} campo(s) ajustado(s) automaticamente.`);
+    for (const a of avisos) console.error(`  aviso: ${a}`);
+    if (valido) return roteiro;
+
+    for (const e of erros) console.error(`  erro: ${e}`);
     ultimaRota = roteiro;
   }
 
+  const resumo = ultimaRota
+    ? `${ultimaRota.slides?.length ?? 0} slides e ${validarRoteiro(ultimaRota, { minSlides: MIN_SLIDES }).erros.length} erro(s) de validação`
+    : 'sem resposta do modelo';
   throw new Error(
-    `Modelo não gerou o mínimo de ${MIN_SLIDES} slides após ${maxTentativas} tentativas (recebidos: ${ultimaRota?.slides?.length ?? 0}).`,
+    `Modelo não gerou um roteiro válido após ${maxTentativas} tentativas (${resumo}).`,
   );
+}
+
+/**
+ * Tenta reparar um JSON truncado/malformado antes de abandonar:
+ *  - remove vírgulas soltas (ex.: `[1, 2, ]`, `{"a": 1,}`)
+ *  - fecha string aberta no fim (modelo cortou no meio de uma narração)
+ *  - fecha colchetes/chaves desbalanceados (append do que falta)
+ * Retorna o texto reparado (pode continuar inválido — o parse decide).
+ */
+export function repararJsonTruncado(s) {
+  let t = String(s ?? '').trim();
+  if (!t) return t;
+
+  // 1) Vírgulas antes de fechamento
+  t = t.replace(/,\s*([\]}])/g, '$1');
+
+  // 2) Varredura para achar string aberta e delimitadores desbalanceados
+  const pilha = [];
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{' || ch === '[') {
+      pilha.push(ch);
+    } else if (ch === '}' || ch === ']') {
+      if (pilha.length) {
+        const topo = pilha[pilha.length - 1];
+        if ((topo === '{' && ch === '}') || (topo === '[' && ch === ']')) pilha.pop();
+      }
+    }
+  }
+
+  // 3) Fecha string aberta no fim (valor truncado vira string incompleta válida)
+  if (inString) t += '"';
+
+  // 4) Remove vírgula final solta (ex.: termina em `,`)
+  t = t.replace(/,\s*$/, '');
+
+  // 5) Fecha os delimitadores que sobraram na pilha
+  while (pilha.length) {
+    t += pilha.pop() === '{' ? '}' : ']';
+  }
+  return t;
 }
 
 export function extrairJson(content) {
@@ -123,18 +184,126 @@ export function extrairJson(content) {
   try {
     return JSON.parse(content.trim());
   } catch {
-    // Fallback: remover code fences e extrair primeiro objeto JSON
+    // Fallback: remover code fences e extrair o JSON
     const semFence = content
       .replace(/```json/gi, '')
       .replace(/```/g, '')
       .trim();
     const inicio = semFence.indexOf('{');
-    const fim = semFence.lastIndexOf('}');
-    if (inicio === -1 || fim === -1) {
+    if (inicio === -1) {
       throw new Error('Resposta do modelo não contém JSON válido. Resposta: ' + content.slice(0, 400));
     }
-    return JSON.parse(semFence.slice(inicio, fim + 1));
+    const fim = semFence.lastIndexOf('}');
+    const candidatos = [];
+    if (fim !== -1 && fim >= inicio) candidatos.push(semFence.slice(inicio, fim + 1));
+    candidatos.push(semFence.slice(inicio));
+    for (const c of candidatos) {
+      try {
+        return JSON.parse(c);
+      } catch {
+        /* segue para o reparo */
+      }
+      try {
+        return JSON.parse(repararJsonTruncado(c));
+      } catch {
+        /* tenta o próximo candidato */
+      }
+    }
+    throw new Error('Resposta do modelo não contém JSON válido. Resposta: ' + content.slice(0, 400));
   }
+}
+
+const contarPalavras = (s) => String(s ?? '').trim().split(/\s+/).filter(Boolean).length;
+const padSlide = (i) => String(i + 1).padStart(2, '0');
+
+/**
+ * Normaliza campos triviais do roteiro que o modelo pode esquecer ou escrever
+ * fora do padrão: id sequencial "slide-NN", titulo não vazio e pontos como lista.
+ * Narração/imagem_prompt vazios NÃO são corrigidos aqui (viram erro → regera).
+ * Retorna o número de ajustes feitos.
+ */
+export function repararRoteiro(roteiro) {
+  let reparos = 0;
+  if (!roteiro || typeof roteiro !== 'object' || !Array.isArray(roteiro.slides)) return reparos;
+  roteiro.slides.forEach((s, i) => {
+    if (!s || typeof s !== 'object') return;
+    const num = padSlide(i);
+    if (s.id !== `slide-${num}`) {
+      s.id = `slide-${num}`;
+      reparos++;
+    }
+    if (typeof s.titulo !== 'string' || !s.titulo.trim()) {
+      s.titulo = `Slide ${num}`;
+      reparos++;
+    }
+    if (!Array.isArray(s.pontos)) {
+      s.pontos = [];
+      reparos++;
+    }
+  });
+  return reparos;
+}
+
+/**
+ * Valida o roteiro gerado contra o contrato esperado pelas etapas seguintes
+ * (imagens, narração, vídeo). Retorna { valido, erros, avisos }:
+ *  - erros: problema que quebra alguma etapa seguinte → exige regenerar.
+ *  - avisos: fora do ideal (ex.: narração 45 palavras) mas não bloqueia.
+ */
+export function validarRoteiro(roteiro, { minSlides = 15 } = {}) {
+  const erros = [];
+  const avisos = [];
+  const rotulo = (i) => `slide ${padSlide(i)}`;
+
+  if (!roteiro || typeof roteiro !== 'object') {
+    erros.push('Roteiro não é um objeto');
+    return { valido: false, erros, avisos };
+  }
+
+  if (typeof roteiro.titulo_aula !== 'string' || !roteiro.titulo_aula.trim()) erros.push('titulo_aula vazio');
+  if (typeof roteiro.introducao !== 'string' || !roteiro.introducao.trim()) erros.push('introducao vazia');
+  if (typeof roteiro.conclusao !== 'string' || !roteiro.conclusao.trim()) erros.push('conclusao vazia');
+
+  if (!Array.isArray(roteiro.slides)) {
+    erros.push('slides não é uma lista');
+    return { valido: false, erros, avisos };
+  }
+
+  if (roteiro.slides.length < minSlides) erros.push(`poucos slides (${roteiro.slides.length}; mínimo ${minSlides})`);
+
+  const ids = new Set();
+  roteiro.slides.forEach((s, i) => {
+    const r = rotulo(i);
+    if (!s || typeof s !== 'object') {
+      erros.push(`${r}: não é um objeto`);
+      return;
+    }
+    if (typeof s.id !== 'string' || !/^slide-\d{2}$/.test(s.id) || ids.has(s.id)) {
+      erros.push(`${r}: id inválido ou duplicado ("${s.id}")`);
+    } else {
+      ids.add(s.id);
+    }
+
+    if (typeof s.titulo !== 'string' || !s.titulo.trim()) avisos.push(`${r}: titulo vazio`);
+    else if (contarPalavras(s.titulo) > 8) avisos.push(`${r}: titulo com ${contarPalavras(s.titulo)} palavras (máx. 8)`);
+
+    if (!Array.isArray(s.pontos)) avisos.push(`${r}: pontos não é uma lista`);
+    else if (s.pontos.length === 0) avisos.push(`${r}: sem pontos`);
+
+    const n = contarPalavras(s.narracao);
+    if (typeof s.narracao !== 'string' || !s.narracao.trim()) erros.push(`${r}: narracao vazia`);
+    else if (n < 30) erros.push(`${r}: narracao curta demais (${n} palavras)`);
+    else if (n < 50 || n > 110) avisos.push(`${r}: narracao com ${n} palavras (ideal 60-90)`);
+
+    if (typeof s.referencia_biblica !== 'string' || !s.referencia_biblica.trim()) {
+      avisos.push(`${r}: referencia_biblica vazia`);
+    }
+
+    if (typeof s.imagem_prompt !== 'string' || !s.imagem_prompt.trim()) erros.push(`${r}: imagem_prompt vazio`);
+    else if (contarPalavras(s.imagem_prompt) < 5) avisos.push(`${r}: imagem_prompt muito curto (${contarPalavras(s.imagem_prompt)} palavras)`);
+  });
+
+  return { valido: erros.length === 0, erros, avisos };
 }
 
 async function main() {
@@ -144,12 +313,7 @@ async function main() {
     process.exit(1);
   }
 
-  const slug = topico
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+  const slug = slugDe(topico);
 
   const outDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'output', slug);
   await mkdir(outDir, { recursive: true });

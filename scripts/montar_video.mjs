@@ -14,6 +14,7 @@ import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { prefixoNarracao, esc } from './util.mjs';
 import {
   AssetStore,
   EngineRegistry,
@@ -82,18 +83,14 @@ async function concatAudios(audios, outPath) {
 // Geração dos frames HTML (slides)
 // ---------------------------------------------------------------------------
 
-function escapeHtml(s) {
-  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
 function gerarFrameHtml(slide, imagePath, numero, total, tituloAula) {
   const imgName = basename(imagePath);
-  const pontos = (slide.pontos || []).map((p) => `<li>${escapeHtml(p)}</li>`).join('');
+  const pontos = (slide.pontos || []).map((p) => `<li>${esc(p)}</li>`).join('');
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>${escapeHtml(slide.titulo)}</title>
+<title>${esc(slide.titulo)}</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { width: ${WIDTH}px; height: ${HEIGHT}px; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; position: relative; background: #0d1b2a; }
@@ -118,16 +115,16 @@ function gerarFrameHtml(slide, imagePath, numero, total, tituloAula) {
 </style>
 </head>
 <body>
-  <div class="bg"><img src="${escapeHtml(imgName)}" /></div>
+  <div class="bg"><img src="${esc(imgName)}" /></div>
   <div class="veil"></div>
   <div class="foot">
-    <span class="brand">${escapeHtml(tituloAula)}</span>
+    <span class="brand">${esc(tituloAula)}</span>
     <span class="counter">${numero} / ${total}</span>
   </div>
   <div class="content">
     <div class="card">
       <div class="kicker">Teologia Básica</div>
-      <h1>${escapeHtml(slide.titulo)}</h1>
+      <h1>${esc(slide.titulo)}</h1>
       <ul>${pontos}</ul>
     </div>
   </div>
@@ -159,7 +156,7 @@ function gerarFrameIntro(roteiro) {
   <div class="brand">Teologia Pra Todos</div>
   <div class="inner">
     <div class="kicker">Teologia Básica</div>
-    <h1>${escapeHtml(roteiro.titulo_aula)}</h1>
+    <h1>${esc(roteiro.titulo_aula)}</h1>
     <div class="sub">Uma introdução didática ao estudo da fé cristã</div>
   </div>
 </body>
@@ -218,12 +215,7 @@ async function main() {
     { id: 'conclusao', texto: roteiro.conclusao },
   ];
   for (let i = 0; i < textos.length; i++) {
-    const totalSlides = roteiro.slides.length;
-    const prefix = i === 0
-      ? '00-intro'
-      : i === totalSlides + 1
-        ? `${String(totalSlides + 1).padStart(2, '0')}-conclusao`
-        : String(i).padStart(2, '0');
+    const prefix = prefixoNarracao(i, textos.length);
     const path = join(outDir, `${prefix}-narracao.mp3`);
     if (!existsSync(path)) throw new Error(`Narração não encontrada: ${path}`);
     const durationSec = await medirDuracaoMp3(path);
@@ -311,8 +303,14 @@ async function main() {
   console.log(JSON.stringify({ output_path: outputPath, project_id: project.id }));
 }
 
-main().catch((e) => {
-  console.error('ERRO:', e.message);
-  if (e.stack) console.error(e.stack.split('\n').slice(0, 4).join('\n'));
-  process.exit(1);
-});
+if (process.argv[1]) {
+  const scriptPath = fileURLToPath(import.meta.url).replace(/\\/g, '/');
+  const argPath = process.argv[1].replace(/\\/g, '/');
+  if (scriptPath === argPath) {
+    main().catch((e) => {
+      console.error('ERRO:', e.message);
+      if (e.stack) console.error(e.stack.split('\n').slice(0, 4).join('\n'));
+      process.exit(1);
+    });
+  }
+}

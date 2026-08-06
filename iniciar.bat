@@ -18,12 +18,16 @@ set "LLAMA_PORT=8091"
 set "COMFY_DIR=D:\ComfyUI_windows_portable"
 set "COMFY_BAT=%COMFY_DIR%\run_nvidia_gpu.bat"
 set "COMFY_PORT=8188"
-set "PORTA=5173"
+set "PORTA=5176"
 
-rem ---- Le a porta salva em .config.json (se existir) ----
+rem ---- Le a porta e os caminhos salvos em .config.json (se existirem) ----
 if exist ".config.json" (
-  for /f %%a in ('powershell -NoProfile -Command "(Get-Content '.config.json' -Raw | ConvertFrom-Json).PORTA"') do if not "%%a"=="" set "PORTA=%%a"
+  for /f "usebackq delims=" %%a in (`powershell -NoProfile -Command "try{(Get-Content '.config.json' -Raw | ConvertFrom-Json).PORTA}catch{}"`) do if not "%%a"=="" set "PORTA=%%a"
+  for /f "usebackq delims=" %%a in (`powershell -NoProfile -Command "try{(Get-Content '.config.json' -Raw | ConvertFrom-Json).LLAMA_EXE}catch{}"`) do if not "%%a"=="" set "LLAMA_EXE=%%a"
+  for /f "usebackq delims=" %%a in (`powershell -NoProfile -Command "try{(Get-Content '.config.json' -Raw | ConvertFrom-Json).LLAMA_MODEL}catch{}"`) do if not "%%a"=="" set "LLAMA_MODEL=%%a"
+  for /f "usebackq delims=" %%a in (`powershell -NoProfile -Command "try{(Get-Content '.config.json' -Raw | ConvertFrom-Json).COMFY_DIR}catch{}"`) do if not "%%a"=="" set "COMFY_DIR=%%a"
 )
+set "COMFY_BAT=%COMFY_DIR%\run_nvidia_gpu.bat"
 
 rem ---- Arquivos auxiliares ficam no projeto (evita acentos do %TEMP%) ----
 set "PIDS_FILE=%~dp0.servidores_%PORTA%.pids"
@@ -61,7 +65,7 @@ if "!LLAMA_OK!"=="1" (
     echo         [ERRO] llama-server nao subiu em 12 min. >> "%LOG_FILE%"
   )
 )
-call :registrar_pid "%LLAMA_PORT%"
+call :registrar_pid "%LLAMA_PORT%" llama-server
 
 call :verificar_http "http://127.0.0.1:%COMFY_PORT%/" COMFY_OK
 if "!COMFY_OK!"=="1" (
@@ -80,7 +84,7 @@ if "!COMFY_OK!"=="1" (
     echo         [ERRO] ComfyUI nao subiu em 4 min. >> "%LOG_FILE%"
   )
 )
-call :registrar_pid "%COMFY_PORT%"
+call :registrar_pid "%COMFY_PORT%" python
 
 call :verificar_http "http://127.0.0.1:%PORTA%/" WEB_OK
 if "!WEB_OK!"=="1" (
@@ -99,7 +103,7 @@ if "!WEB_OK!"=="1" (
     echo         [ERRO] servidor web nao subiu em 30s. >> "%LOG_FILE%"
   )
 )
-call :registrar_pid "%PORTA%"
+call :registrar_pid "%PORTA%" node
 
 rem ---- Resumo ----
 echo.
@@ -162,8 +166,25 @@ timeout /t 1 /nobreak >nul 2>nul || ping -n 2 127.0.0.1 >nul
 goto :aguardar_loop
 
 :registrar_pid
+rem %1 = porta   %2 = nome esperado do processo (substring)
+rem Só registra o PID se o processo que escuta a porta for o esperado
+rem (ex.: llama-server.exe / python.exe do ComfyUI / node.exe do servidor web).
+rem Assim nunca encerramos um processo não relacionado que já ocupe a porta.
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr /r ":%1 " ^| findstr "LISTENING"') do (
-  if not "%%p"=="" echo %%p >> "%PIDS_FILE%"
+  if not "%%p"=="" (
+    for /f "usebackq delims=" %%n in (`powershell -NoProfile -Command "(Get-Process -Id %%p -ErrorAction SilentlyContinue).ProcessName"`) do (
+      if not "%%n"=="" (
+        echo %%n | findstr /i "%~2" >nul
+        if not errorlevel 1 (
+          findstr /x "%%p" "%PIDS_FILE%" >nul 2>nul
+          if errorlevel 1 echo %%p >> "%PIDS_FILE%"
+          echo   [registro] porta %1 = PID %%p ^(%%n^) >> "%LOG_FILE%"
+        ) else (
+          echo   [aviso] porta %1 ocupada por processo nao esperado: %%n ^(PID %%p^) - nao sera encerrado. >> "%LOG_FILE%"
+        )
+      )
+    )
+  )
   exit /b 0
 )
 exit /b 0

@@ -107,8 +107,12 @@ export async function gerarImagensSlides(slides, outDir) {
     const hb = setInterval(() => {
       console.error(`  [imagem ${i + 1}/${slides.length}] ${slide.titulo} ... aguardando ComfyUI (${Math.round((Date.now() - inicioImg) / 1000)}s)`);
     }, 15000);
-    const src = await gerarImagemSlide(slide.imagem_prompt, seed);
-    clearInterval(hb);
+    let src;
+    try {
+      src = await gerarImagemSlide(slide.imagem_prompt, seed);
+    } finally {
+      clearInterval(hb);
+    }
     await copyFile(src, dest);
     imagens.push({ id: slide.id, path: dest });
     console.error(`  OK: ${dest}`);

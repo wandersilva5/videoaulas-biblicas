@@ -2,4 +2,8 @@ node_modules/*
 AGENTS.md
 docs/*
 output/*
+pdfs/*
 .html-video/*
+.config.json
+*.pids
+*.log

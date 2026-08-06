@@ -1,7 +1,9 @@
-import { readFile, mkdir, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
+import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { prefixoNarracao, hashDe } from './util.mjs';
 
 const VOZ = process.env.VOZ || 'pt-BR-AntonioNeural';
 
@@ -43,13 +45,6 @@ function tts(texto, outPath) {
   });
 }
 
-/** Nomes de arquivo esperados pelo montar_video.mjs. */
-export function prefixoNarracao(index, total) {
-  if (index === 0) return '00-intro';
-  if (index === total - 1) return `${String(total - 1).padStart(2, '0')}-conclusao`;
-  return String(index).padStart(2, '0');
-}
-
 /** Gera o MP3 de um único item (intro, slide ou conclusão). */
 export async function gerarNarracaoItem(item, outDir) {
   const outPath = join(outDir, `${item.prefix}-narracao.mp3`);
@@ -78,12 +73,14 @@ export async function gerarNarracao(roteiro, outDir) {
 async function main() {
   const roteiroPath = process.argv[2];
   if (!roteiroPath) {
-    console.error('Uso: node gerar_narracao.mjs <caminho/roteiro.json> [--apenas <id>]');
+    console.error('Uso: node gerar_narracao.mjs <caminho/roteiro.json> [--apenas <id>] [--todos]');
     console.error('  --apenas <id>  regenera só um item: intro, slide-01..., conclusao');
+    console.error('  --todos         regenera todos (ignora o manifesto — por padrão pula itens já atualizados)');
     process.exit(1);
   }
   const apenasIdx = process.argv.indexOf('--apenas');
   const apenas = apenasIdx !== -1 ? process.argv[apenasIdx + 1] : null;
+  const todos = process.argv.includes('--todos');
   const roteiro = JSON.parse(await readFile(roteiroPath, 'utf8'));
   const outDir = dirname(roteiroPath);
   const textos = [
@@ -99,6 +96,30 @@ async function main() {
       console.error(`ERRO: item "${apenas}" não encontrado (use: intro, slide-XX ou conclusao)`);
       process.exit(1);
     }
+  } else if (!todos) {
+    const manifest = await (async () => {
+      try {
+        return JSON.parse(await readFile(join(outDir, 'manifesto.json'), 'utf8'));
+      } catch {
+        return { audio: {} };
+      }
+    })();
+    const filtrados = [];
+    for (const item of items) {
+      const mp3 = join(outDir, `${item.prefix}-narracao.mp3`);
+      const atualizado = existsSync(mp3) && manifest.audio?.[item.id] === hashDe(item.texto);
+      if (atualizado) {
+        console.error(`  OK: ${item.prefix}-narracao.mp3 já atualizado — pulando (${item.titulo})`);
+      } else {
+        filtrados.push(item);
+      }
+    }
+    items = filtrados;
+  }
+  if (items.length === 0) {
+    console.error('[3/4] Nenhuma narração precisa ser gerada — tudo atualizado no manifesto.');
+    console.log(JSON.stringify([]));
+    return;
   }
   console.error(`[3/4] Gerando ${items.length} arquivo(s) de narração ...`);
   const narracao = [];
