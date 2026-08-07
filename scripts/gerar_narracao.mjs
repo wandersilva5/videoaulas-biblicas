@@ -12,25 +12,67 @@ const QWEN = qwenEnv();
 
 const ORDINAIS_LIVROS = { '1': 'Primeira', '2': 'Segunda', '3': 'Terceira' };
 
+const UNIDADES = ['', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove'];
+const DEZ_A_DEZENOVE = ['dez', 'onze', 'doze', 'treze', 'quatorze', 'quinze', 'dezesseis', 'dezessete', 'dezoito', 'dezenove'];
+const DEZENAS = ['', '', 'vinte', 'trinta', 'quarenta', 'cinquenta', 'sessenta', 'setenta', 'oitenta', 'noventa'];
+const CENTENAS = ['', 'cento', 'duzentos', 'trezentos', 'quatrocentos', 'quinhentos', 'seiscentos', 'setecentos', 'oitocentos', 'novecentos'];
+
+/** Converte um inteiro (0..999999) para texto por extenso em pt-BR. */
+export function numeroPorExtenso(n) {
+  n = Math.trunc(Number(n));
+  if (Number.isNaN(n) || n < 0 || n >= 1000000) return String(n);
+  if (n === 0) return 'zero';
+  let s = '';
+  if (n >= 1000) {
+    const m = Math.floor(n / 1000);
+    s += m === 1 ? 'mil' : `${numeroPorExtenso(m)} mil`;
+    n %= 1000;
+    if (n) s += ' e ';
+  }
+  if (n >= 100) {
+    const c = Math.floor(n / 100);
+    s += c === 1 && n !== 100 ? 'cento' : CENTENAS[c];
+    n %= 100;
+    if (n) s += ' e ';
+  }
+  if (n > 0) {
+    if (n < 10) s += UNIDADES[n];
+    else if (n < 20) s += DEZ_A_DEZENOVE[n - 10];
+    else {
+      const d = Math.floor(n / 10);
+      const u = n % 10;
+      s += DEZENAS[d];
+      if (u) s += ` e ${UNIDADES[u]}`;
+    }
+  }
+  return s;
+}
+
 /**
  * Normaliza o texto para o leitor de voz (TTS) pronunciar referências
- * bíblicas corretamente:
- *   - "1 Timóteo 3:1"  -> "Primeira Timóteo 3, 1"
- *   - "João 3:16"      -> "João 3, 16"
- *   - "1 Cor 13:4-7"   -> "Primeira Coríntios 13, 4 a 7"
- * Sem isso o TTS lê "1 Timóteo 3 horas e 1 minuto".
+ * bíblicas e números corretamente, tudo por extenso:
+ *   - "1 Timóteo 3:1"      -> "Primeira Timóteo, capítulo três, versículo um"
+ *   - "Salmo 111:3"        -> "Salmo, capítulo cento e onze, versículo três"
+ *   - "1 Cor 13:4-7"       -> "Primeira Coríntios, capítulo treze, versículo quatro a sete"
+ *   - "50 anos"            -> "cinquenta anos"
+ * Sem isso o TTS lê "1 Timóteo 3 horas e 1 minuto" ou engole números.
  */
 export function normalizarReferenciasParaTts(texto) {
-  return String(texto ?? '')
-    // Numeral do livro -> ordinal (somente antes de nome de livro bíblico)
-    .replace(
-      /\b([123])\s+(Timóteo|Coríntios|Tessalonicenses|Pedro|João|Joao|Reis|Crônicas|Cronicas|Samuel|Esdras|Macabeus)\b/gi,
-      (_, n, livro) => `${ORDINAIS_LIVROS[n]} ${livro}`,
-    )
-    // capítulo:versículo (com faixa opcional) -> capítulo, versículo
-    .replace(/\b(\d{1,3}):(\d{1,3})(?:\s*-\s*(\d{1,3}))?\b/g, (_, c, v, f) =>
-      f ? `${c}, ${v} a ${f}` : `${c}, ${v}`,
-    );
+  let t = String(texto ?? '');
+  // Numeral do livro -> ordinal (somente antes de nome de livro bíblico)
+  t = t.replace(
+    /\b([123])\s+(Timóteo|Coríntios|Tessalonicenses|Pedro|João|Joao|Reis|Crônicas|Cronicas|Samuel|Esdras|Macabeus)\b/gi,
+    (_, n, livro) => `${ORDINAIS_LIVROS[n]} ${livro}`,
+  );
+  // capítulo:versículo (com faixa opcional) -> capítulo/versículo por extenso
+  t = t.replace(/\b(\d{1,3}):(\d{1,3})(?:\s*-\s*(\d{1,3}))?\b/g, (_, c, v, f) =>
+    f
+      ? `capítulo ${numeroPorExtenso(c)}, versículo ${numeroPorExtenso(v)} a ${numeroPorExtenso(f)}`
+      : `capítulo ${numeroPorExtenso(c)}, versículo ${numeroPorExtenso(v)}`,
+  );
+  // Qualquer número inteiro restante -> por extenso
+  t = t.replace(/\b\d{1,6}\b/g, (m) => numeroPorExtenso(m));
+  return t;
 }
 
 function tts(texto, outPath) {
