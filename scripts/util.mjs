@@ -4,7 +4,8 @@
 import { createHash } from 'node:crypto';
 import { readdir, stat, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join, basename, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Nome do modelo (id da API) usado nas chamadas ao llama-server.
@@ -17,6 +18,34 @@ export function modeloLLama() {
     process.env.LLAMA_MODELO ||
     (process.env.LLAMA_MODEL ? basename(process.env.LLAMA_MODEL) : 'Qwen3.5-9B-Q4_K_M.gguf')
   );
+}
+
+/**
+ * Configuração do Qwen3-TTS (clone de voz local). Fonte única dos defaults,
+ * usada por `gerar_narracao.mjs`, `smoke.mjs` e `servidor.mjs`. Aceita um
+ * objeto de overrides (ex.: `{ ...process.env, ...CONFIG }`) para o servidor
+ * respeitar o que for persistido no `.config.json`.
+ */
+export function qwenEnv(env = process.env) {
+  const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+  return {
+    TTS: env.TTS || 'qwen',
+    QWEN_ROOT: env.QWEN_ROOT || 'E:/llama.cpp/qwen3-tts-gguf',
+    QWEN_PYTHON: env.QWEN_PYTHON || 'python',
+    QWEN_MODEL: env.QWEN_MODEL || 'model-base',
+    QWEN_REF: env.QWEN_REF || join(ROOT, 'voz-base', 'fernando.wav'),
+    QWEN_REF_START: env.QWEN_REF_START || '30',
+    QWEN_REF_END: env.QWEN_REF_END || '45',
+    QWEN_REF_TEXTO:
+      env.QWEN_REF_TEXTO ||
+      'As escritas Sagradas parecem não querer mostrar que realmente estão dizendo. Resta então acumular, um grande números de suposições e discussões em muitas mesas de estudos. Afinal',
+    QWEN_MAX_STEPS: env.QWEN_MAX_STEPS || '600',
+    QWEN_TEMP: env.QWEN_TEMP || '0.6',
+    QWEN_SEED: env.QWEN_SEED || '42',
+    QWEN_SUB_SEED: env.QWEN_SUB_SEED || '45',
+    QWEN_ZERO_SHOT: env.QWEN_ZERO_SHOT || '0',
+    QWEN_ONNX_PROVIDER: env.QWEN_ONNX_PROVIDER || 'CUDA',
+  };
 }
 
 /**

@@ -85,7 +85,12 @@
       <label>ZIMAGE_CLIP <input data-cfg="ZIMAGE_CLIP" type="text" /></label>
       <label>ZIMAGE_VAE <input data-cfg="ZIMAGE_VAE" type="text" /></label>
       <label>ZIMAGE_LORA <input data-cfg="ZIMAGE_LORA" type="text" /></label>
-      <label>VOZ (edge-tts) <input data-cfg="VOZ" type="text" /></label>
+      <label>TTS (qwen = clone de voz local, edge-tts = fallback) <select data-cfg="TTS">
+        <option value="qwen">qwen</option>
+        <option value="edge-tts">edge-tts</option>
+      </select></label>
+      <label>QWEN_REF (WAV da voz de referência) <input data-cfg="QWEN_REF" type="text" /></label>
+      <label>VOZ (edge-tts, fallback) <input data-cfg="VOZ" type="text" /></label>
       <label>PORTA <input data-cfg="PORTA" type="number" /></label>
       <label>LLAMA_EXE (caminho do llama-server) <input data-cfg="LLAMA_EXE" type="text" /></label>
       <label>LLAMA_MODEL (modelo do llama-server) <input data-cfg="LLAMA_MODEL" type="text" /></label>

@@ -6,15 +6,16 @@
  *
  * Verifica:
  *   1. sintaxe (node --check) de todos os scripts/*.mjs
- *   2. binários: edge-tts, ffmpeg, ffprobe
+ *   2. binários: ffmpeg, ffprobe
  *   3. Chromium do Playwright (cache)
- *   4. conectividade: llama-server (/v1/models) e ComfyUI (/system_stats)
+ *   4. Qwen3-TTS (engine GGUF + voz de referência + python importável)
+ *   5. conectividade: llama-server (/v1/models) e ComfyUI (/system_stats)
  */
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { modeloLLama } from './util.mjs';
+import { modeloLLama, qwenEnv } from './util.mjs';
 
 const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SCRIPTS_DIR, '..');
@@ -27,7 +28,8 @@ function config() {
   } catch {
     /* sem .config.json */
   }
-  if (!process.env.LLAMA_MODEL && doArquivo.LLAMA_MODEL) process.env.LLAMA_MODEL = doArquivo.LLAMA_MODEL;
+  // Env tem precedência sobre o .config.json (mesmo comportamento do servidor).
+  for (const [k, v] of Object.entries(doArquivo)) if (!(k in process.env)) process.env[k] = v;
   return {
     LLAMA_URL: (process.env.LLAMA_URL || doArquivo.LLAMA_URL || 'http://127.0.0.1:8091').replace(/\/+$/, ''),
     COMFY_URL: (process.env.COMFY_URL || doArquivo.COMFY_URL || 'http://127.0.0.1:8188').replace(/\/+$/, ''),
@@ -83,6 +85,34 @@ async function checarChromium() {
   }
 }
 
+/** Qwen3-TTS (clone de voz): engine GGUF, voz de referência e python importável. */
+async function checarQwen() {
+  const QWEN = qwenEnv();
+  const engineDir = join(QWEN.QWEN_ROOT, QWEN.QWEN_MODEL || 'model-base');
+  if (!existsSync(engineDir)) {
+    return { ok: false, versao: null, erro: `engine não encontrada em ${engineDir}` };
+  }
+  if (!existsSync(QWEN.QWEN_REF)) {
+    return { ok: false, versao: null, erro: `voz de referência não encontrada: ${QWEN.QWEN_REF}` };
+  }
+  const py = [
+    'import sys;',
+    `sys.path.insert(0, ${JSON.stringify(QWEN.QWEN_ROOT)});`,
+    'from qwen3_tts_gguf.inference import TTSEngine, TTSConfig;',
+    'print("import ok")',
+  ].join('');
+  const r = spawnSync(QWEN.QWEN_PYTHON, ['-c', py], {
+    encoding: 'utf8',
+    timeout: 30000,
+    windowsHide: true,
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+  });
+  if (r.error) return { ok: false, versao: null, erro: r.error.code || r.error.message };
+  const saida = (r.stdout || '').trim();
+  if (r.status !== 0) return { ok: false, versao: null, erro: (r.stderr || r.stdout || '').trim().split(/\r?\n/)[0] || `exit ${r.status}` };
+  return { ok: true, versao: saida || 'ok', erro: null };
+}
+
 function basenameDir(p) {
   const parts = p.replace(/\\/g, '/').split('/');
   return parts[parts.length - 2];
@@ -103,7 +133,7 @@ async function main() {
   const cfg = config();
   const resultados = {
     sintaxe: checarSintaxe(),
-    edge_tts: checarComando('edge-tts', ['--version']),
+    qwen: await checarQwen(),
     ffmpeg: checarComando('ffmpeg', ['-version']),
     ffprobe: checarComando('ffprobe', ['-version']),
     chromium: await checarChromium(),

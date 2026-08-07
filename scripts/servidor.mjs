@@ -4,7 +4,7 @@ import { existsSync, createReadStream, statSync } from 'node:fs';
 import { join, dirname, basename, extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { slugDe, hashDe, esc, MIME, itensDoRoteiro, limparProjetosAntigosHtmlVideo } from './util.mjs';
+import { slugDe, hashDe, esc, MIME, itensDoRoteiro, limparProjetosAntigosHtmlVideo, qwenEnv } from './util.mjs';
 
 const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SCRIPTS_DIR, '..');
@@ -367,7 +367,7 @@ async function listarAulas() {
 const NOMES_SERVICO = {
   llama: 'llama-server (roteiro/enriquecimento)',
   comfy: 'ComfyUI (imagens)',
-  edge_tts: 'edge-tts (narração)',
+  qwen: 'Qwen3-TTS (narração)',
   ffmpeg: 'ffmpeg (vídeo)',
   ffprobe: 'ffprobe (vídeo)',
   chromium: 'Chromium (Playwright)',
@@ -419,18 +419,59 @@ async function checarChromium() {
   }
 }
 
+/** Qwen3-TTS (clone de voz): engine GGUF, voz de referência e python importável. */
+function checarQwen() {
+  const QWEN = qwenEnv({ ...process.env, ...CONFIG });
+  const engineDir = join(QWEN.QWEN_ROOT, QWEN.QWEN_MODEL || 'model-base');
+  if (!existsSync(engineDir)) {
+    return Promise.resolve({ ok: false, erro: `engine não encontrada em ${engineDir}`, versao: null });
+  }
+  if (!existsSync(QWEN.QWEN_REF)) {
+    return Promise.resolve({ ok: false, erro: `voz de referência não encontrada: ${QWEN.QWEN_REF}`, versao: null });
+  }
+  return new Promise((resolve) => {
+    const py = [
+      'import sys;',
+      `sys.path.insert(0, ${JSON.stringify(QWEN.QWEN_ROOT)});`,
+      'from qwen3_tts_gguf.inference import TTSEngine, TTSConfig;',
+      'print("import ok")',
+    ].join('');
+    let proc = null;
+    const t = setTimeout(() => {
+      proc?.kill();
+      resolve({ ok: false, erro: 'timeout', versao: null });
+    }, 30000);
+    proc = spawn(QWEN.QWEN_PYTHON, ['-c', py], {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, ...CONFIG, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+    });
+    let saida = '';
+    proc.stdout.on('data', (d) => (saida += d.toString()));
+    proc.on('error', (e) => {
+      clearTimeout(t);
+      resolve({ ok: false, erro: e.code || e.message, versao: null });
+    });
+    proc.on('exit', (code) => {
+      clearTimeout(t);
+      const primeira = saida.trim().split(/\r?\n/)[0] || null;
+      resolve({ ok: code === 0, erro: code === 0 ? null : 'python não importou a engine (veja QWEN_ROOT/PYTHON)', versao: primeira });
+    });
+  });
+}
+
 async function statusDosServicos() {
   const llmBase = String(CONFIG.LLAMA_URL || '').replace(/\/+$/, '');
   const comfyBase = String(CONFIG.COMFY_URL || '').replace(/\/+$/, '');
-  const [llama, comfy, edge_tts, ffmpeg, ffprobe, chromium] = await Promise.all([
+  const [llama, comfy, qwen, ffmpeg, ffprobe, chromium] = await Promise.all([
     checarHttp(`${llmBase}/v1/models`),
     checarHttp(`${comfyBase}/system_stats`),
-    checarComando('edge-tts', ['--version']),
+    checarQwen(),
     checarComando('ffmpeg', ['-version']),
     checarComando('ffprobe', ['-version']),
     checarChromium(),
   ]);
-  const servicos = { llama, comfy, edge_tts, ffmpeg, ffprobe, chromium };
+  const servicos = { llama, comfy, qwen, ffmpeg, ffprobe, chromium };
   const nomes = Object.keys(servicos);
   return {
     ok: nomes.every((k) => servicos[k].ok),

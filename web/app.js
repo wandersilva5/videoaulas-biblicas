@@ -118,7 +118,7 @@ function renderListaServicos() {
     el.innerHTML = '<div class="servico-item carregando"><span class="servico-status">…</span><span class="servico-nome">Verificando…</span></div>';
     return;
   }
-  const ordens = ['llama', 'comfy', 'edge_tts', 'ffmpeg', 'ffprobe', 'chromium'];
+  const ordens = ['llama', 'comfy', 'qwen', 'ffmpeg', 'ffprobe', 'chromium'];
   el.innerHTML = ordens
     .map((k) => {
       const v = s.servicos[k];
@@ -783,7 +783,7 @@ $('#etapa-container').addEventListener('click', async (ev) => {
     if (estado.servicos && !servicoOk('comfy')) return toast('ComfyUI indisponível — não é possível gerar imagens.', true);
   }
   if (acao === 'regen-narracao' || acao === 'regenerar-desatualizados-narracao' || acao === 'recriar-todas-narracao') {
-    if (estado.servicos && !servicoOk('edge_tts')) return toast('edge-tts indisponível — não é possível gerar narração.', true);
+    if (estado.servicos && !servicoOk('qwen')) return toast('Qwen3-TTS indisponível — não é possível gerar narração.', true);
   }
   if (acao === 'regen-imagem') {
     return rodarJob(api(`/api/imagens/${estado.slug}`, { method: 'POST', body: JSON.stringify({ slideId, variar: true }) }), 'Imagem regenerada.');

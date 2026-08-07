@@ -48,8 +48,8 @@ async function medirDuracaoMp3(path) {
 async function concatAudios(audios, outPath) {
   // Cada MP3 vira entrada separada e é concatenado com gaps de silêncio
   // (aresample + anullsrc) para alinhar com os frames (SLIDE_PADDING_SEC entre cada).
-  // Observação: edge-tts produz MP3 24kHz mono; normalizamos tudo para 44.1kHz
-  // stereo antes do concat, senão o filtro falha por incompatibilidade de formato.
+  // Observação: TTS=qwen produz WAV 24kHz mono (convertido a MP3); TTS=edge-tts produz MP3 24kHz mono.
+  // Normalizamos tudo para 44.1kHz stereo antes do concat.
   const { spawn } = await import('node:child_process');
   const args = ['-y'];
   const n = audios.length;

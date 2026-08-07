@@ -1,16 +1,19 @@
 import { readFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, unlinkSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { prefixoNarracao, hashDe } from './util.mjs';
-
+import { prefixoNarracao, hashDe, qwenEnv } from './util.mjs';
+const TTS = process.env.TTS || 'qwen';
 const VOZ = process.env.VOZ || 'pt-BR-AntonioNeural';
+
+// Qwen3-TTS (clone de voz local). Padrões vindos de util.mjs (qwenEnv).
+const QWEN = qwenEnv();
 
 const ORDINAIS_LIVROS = { '1': 'Primeira', '2': 'Segunda', '3': 'Terceira' };
 
 /**
- * Normaliza o texto para o leitor de voz (edge-tts) pronunciar referências
+ * Normaliza o texto para o leitor de voz (TTS) pronunciar referências
  * bíblicas corretamente:
  *   - "1 Timóteo 3:1"  -> "Primeira Timóteo 3, 1"
  *   - "João 3:16"      -> "João 3, 16"
@@ -45,13 +48,78 @@ function tts(texto, outPath) {
   });
 }
 
-/** Gera o MP3 de um único item (intro, slide ou conclusão). */
+/** Roda o bridge Python do Qwen3-TTS (gera WAV 24kHz) e converte para MP3. */
+function ttsQwen(texto, outMp3) {
+  return new Promise((resolve, reject) => {
+    const wavTmp = outMp3.replace(/\.mp3$/, '.tmp.wav');
+    const args = [
+      join(dirname(fileURLToPath(import.meta.url)), 'qwen_tts_bridge.py'),
+      '--texto', texto,
+      '--saida', wavTmp,
+    ];
+    const env = {
+      ...process.env,
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUTF8: '1',
+      QWEN_ROOT: QWEN.QWEN_ROOT,
+      QWEN_REF: QWEN.QWEN_REF,
+      QWEN_REF_START: QWEN.QWEN_REF_START,
+      QWEN_REF_END: QWEN.QWEN_REF_END,
+      QWEN_REF_TEXTO: QWEN.QWEN_REF_TEXTO,
+      QWEN_MAX_STEPS: QWEN.QWEN_MAX_STEPS,
+      QWEN_TEMP: QWEN.QWEN_TEMP,
+      QWEN_SEED: QWEN.QWEN_SEED,
+      QWEN_SUB_SEED: QWEN.QWEN_SUB_SEED,
+      QWEN_ZERO_SHOT: QWEN.QWEN_ZERO_SHOT,
+      QWEN_ONNX_PROVIDER: QWEN.QWEN_ONNX_PROVIDER,
+    };
+    const proc = spawn(QWEN.QWEN_PYTHON, args, { stdio: ['ignore', 'pipe', 'pipe'], env });
+    let log = '';
+    proc.stdout.on('data', (d) => (log += d.toString()));
+    proc.stderr.on('data', (d) => (log += d.toString()));
+    proc.on('error', reject);
+    proc.on('exit', async (code) => {
+      try {
+        if (code !== 0) throw new Error(`qwen bridge exit ${code}: ${log.slice(0, 500)}`);
+        await new Promise((res, rej) => {
+          const ff = spawn('ffmpeg', ['-y', '-i', wavTmp, '-codec:a', 'libmp3lame', '-b:a', '128k', outMp3], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          let ferr = '';
+          ff.stderr.on('data', (d) => (ferr += d.toString()));
+          ff.on('error', rej);
+          ff.on('exit', (c) => (c === 0 ? res() : rej(new Error(`ffmpeg exit ${c}: ${ferr.slice(0, 300)}`))));
+        });
+        try { unlinkSync(wavTmp); } catch { /* já foi limpo */ }
+        resolve(outMp3);
+      } catch (e) {
+        reject(e);
+      }
+    });
+  });
+}
+
+/** Gera o MP3 de um item com 2 tentativas (falha de GPU é transitória). */
 export async function gerarNarracaoItem(item, outDir) {
   const outPath = join(outDir, `${item.prefix}-narracao.mp3`);
-  console.error(`  [narração] ${item.titulo} ...`);
-  await tts(normalizarReferenciasParaTts(item.texto), outPath);
-  console.error(`  OK: ${outPath}`);
-  return { id: item.id, titulo: item.titulo, path: outPath };
+  const texto = normalizarReferenciasParaTts(item.texto);
+  let ultimoErro = null;
+  for (let tentativa = 1; tentativa <= 2; tentativa++) {
+    try {
+      console.error(`  [narração] ${item.titulo} ...`);
+      if (TTS === 'qwen') {
+        await ttsQwen(texto, outPath);
+      } else {
+        await tts(texto, outPath);
+      }
+      console.error(`  OK: ${outPath}`);
+      return { id: item.id, titulo: item.titulo, path: outPath };
+    } catch (e) {
+      ultimoErro = e;
+      console.error(`  [narração] tentativa ${tentativa}/2 falhou: ${e.message}`);
+    }
+  }
+  throw ultimoErro;
 }
 
 export async function gerarNarracao(roteiro, outDir) {
@@ -76,6 +144,7 @@ async function main() {
     console.error('Uso: node gerar_narracao.mjs <caminho/roteiro.json> [--apenas <id>] [--todos]');
     console.error('  --apenas <id>  regenera só um item: intro, slide-01..., conclusao');
     console.error('  --todos         regenera todos (ignora o manifesto — por padrão pula itens já atualizados)');
+    console.error('  TTS= qwen (padrão, clone de voz) | edge-tts (fallback)');
     process.exit(1);
   }
   const apenasIdx = process.argv.indexOf('--apenas');

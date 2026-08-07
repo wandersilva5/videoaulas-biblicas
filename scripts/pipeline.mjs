@@ -52,7 +52,8 @@ async function main() {
     console.error('');
     console.error('Variáveis opcionais:');
     console.error('  LLAMA_URL  - URL do llama-server (default http://127.0.0.1:8091)');
-    console.error('  VOZ        - voz do edge-tts (default pt-BR-AntonioNeural)');
+    console.error('  TTS        - qwen (padrão, clone de voz) | edge-tts (fallback)');
+    console.error('  VOZ        - voz do edge-tts quando TTS=edge-tts (default pt-BR-AntonioNeural)');
     console.error('  PULAR_ROTEIRO=1  - pula a geração do roteiro (usa roteiro.json existente)');
     console.error('  PIPELINE_RETRIES  - tentativas por etapa (default 3)');
     console.error('  PIPELINE_RETRY_BASE_MS  - backoff base em ms (default 4000)');
@@ -81,7 +82,7 @@ async function main() {
   const imagensOk = await rodarComRetry(() => rodarNode('gerar_imagens.mjs', [roteiroPath]), 'Etapa 2 (imagens)');
   console.log(`[2/4] ${JSON.parse(imagensOk).length} imagens geradas.`);
 
-  // Etapa 3: Narração (edge-tts)
+  // Etapa 3: Narração (qwen)
   const narracaoOk = await rodarComRetry(() => rodarNode('gerar_narracao.mjs', [roteiroPath]), 'Etapa 3 (narração)');
   console.log(`[3/4] ${JSON.parse(narracaoOk).length} arquivos de narração gerados.`);
 

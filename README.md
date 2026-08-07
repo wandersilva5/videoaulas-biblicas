@@ -22,7 +22,7 @@ Quatro etapas encadeadas, cada uma consumindo o resultado da anterior:
 
 1. **`gerar_roteiro.mjs`** — chama o **llama-server** (OpenAI-compatible) com um prompt de professor de teologia bíblica e gera o `roteiro.json` (título, introdução, ≥15 slides com pontos/narração/referência bíblica/prompt de imagem, conclusão).
 2. **`gerar_imagens.mjs`** — envia cada `imagem_prompt` ao **ComfyUI** (workflow Z-Image Turbo) e salva `slide-NN.png`.
-3. **`gerar_narracao.mjs`** — usa o CLI **edge-tts** para gerar os MP3s de narração (introdução, cada slide, conclusão) com voz em pt-BR.
+3. **`gerar_narracao.mjs`** — usa o **Qwen3-TTS** (clone de voz local, padrão `TTS=qwen`) para gerar os MP3s de narração (introdução, cada slide, conclusão) com fallback para `edge-tts` (voz `pt-BR-AntonioNeural`, env `VOZ`).
 4. **`montar_video.mjs`** — consome o `roteiro.json` + PNGs + MP3s e renderiza o MP4 final via **html-video** (Chromium headless + ffmpeg), com frames animados, marca d'água "TEOLOGIA PRA TODOS" e áudio mixado.
 
 Cada etapa imprime seu resultado JSON no stdout; linhas de progresso/log vão para o stderr.
@@ -35,7 +35,7 @@ O pipeline depende de quatro serviços, todos locais e específicos da máquina:
 |---|---|---|
 | **llama-server** (llama.cpp, OpenAI-compatible) | `http://127.0.0.1:8091` | Gera o roteiro (env `LLAMA_URL`) |
 | **ComfyUI** | `http://127.0.0.1:8188` | Gera as imagens dos slides (env `COMFY_URL`) |
-| **edge-tts** (CLI no PATH) | — | Narração em MP3, voz `pt-BR-AntonioNeural` (env `VOZ`) |
+| **Qwen3-TTS** (engine GGUF + onnxruntime) | local (`E:\llama.cpp\qwen3-tts-gguf`, env `QWEN_ROOT`) | Narração via clone de voz (env `TTS=qwen` padrão; fallback `edge-tts`) |
 | **ffmpeg / ffprobe** (no PATH) | — | Usados pelo `montar_video.mjs` |
 
 ### Workflow Z-Image Turbo (ComfyUI)
@@ -86,7 +86,7 @@ node scripts/servidor.mjs
 - `GET/PUT /api/roteiro/:slug` edita o roteiro; `POST /api/imagens|narracao|video/:slug` regenera tudo ou um item (`{slideId}` apaga só o PNG/MP3 e re-roda a etapa, que pula os existentes). Vídeo exige imagem + áudio de todos os slides (retorna 400 com diagnóstico).
 - `manifesto.json` (em `output/<slug>/`) guarda hashes do texto/prompt por item para marcar itens "desatualizados" na UI.
 - `/media/<slug>/...` serve PNGs/MP3s/MP4s da saída.
-- Botão **"◉ Serviços"** no topo mostra o status dos pré-requisitos (via `GET /api/health`): llama-server, ComfyUI, edge-tts, ffmpeg, ffprobe e Chromium. A UI bloqueia/avisa antes de uma etapa cujo serviço está fora (ex.: roteiro sem llama-server, imagens sem ComfyUI, narração sem edge-tts, vídeo sem ffmpeg/Chromium).
+- Botão **"◉ Serviços"** no topo mostra o status dos pré-requisitos (via `GET /api/health`): llama-server, ComfyUI, **Qwen3-TTS**, ffmpeg, ffprobe e Chromium. A UI bloqueia/avisa antes de uma etapa cujo serviço está fora (ex.: roteiro sem llama-server, imagens sem ComfyUI, narração sem Qwen3-TTS, vídeo sem ffmpeg/Chromium).
 - Estado de job: `GET /api/job` (job ativo + último resultado) e `POST /api/cancelar-job`. A UI mostra um indicador "🔄 etapa em andamento" no topo, banner com tempo decorrido e botão "✕ Cancelar", e sonda `/api/job` a cada 5s — o status **sobrevive a recarregar a página** (o SSE não re-apresenta jobs já iniciados).
 
 ### API do servidor
@@ -102,7 +102,7 @@ node scripts/servidor.mjs
 | `POST /api/video/:slug` `{fps,width,height,padding}` | Monta o vídeo; retorna `output_path` |
 | `GET /api/artefatos/:slug` | Status por slide: PNG? MP3? desatualizado? duração? |
 | `GET/PUT /api/config` | Knobs de ambiente (ver [variáveis](#variáveis-de-ambiente--configuração)) |
-| `GET /api/health` | Status dos pré-requisitos: llama-server, ComfyUI, edge-tts, ffmpeg, ffprobe, Chromium |
+| `GET /api/health` | Status dos pré-requisitos: llama-server, ComfyUI, **Qwen3-TTS**, ffmpeg, ffprobe, Chromium |
 | `GET /api/job` | Estado do job: `{ativo, etapa, jobId, iniciadoEm, ultimo}` (sobrevive a refresh da página) |
 | `POST /api/cancelar-job` | Encerra o job ativo (mata o processo; a requisição do job responde 499 `JOB_CANCELADO`) |
 | `DELETE /api/aulas/:slug` | Exclui a aula: apaga `output/<slug>/`, `pdfs/<slug>-estudo.pdf` e os projetos de render correspondentes em `.html-video/projects/` |
@@ -133,7 +133,7 @@ videoaulas-teologia/
 │  ├─ pipeline.mjs          # orquestra as 4 etapas em sequência (CLI)
 │  ├─ gerar_roteiro.mjs     # [1/4] roteiro via llama-server
 │  ├─ gerar_imagens.mjs     # [2/4] slides via ComfyUI (Z-Image Turbo)
-│  ├─ gerar_narracao.mjs    # [3/4] MP3s via edge-tts
+│  ├─ gerar_narracao.mjs    # [3/4] MP3s via Qwen3-TTS (clone de voz, fallback edge-tts)
 │  ├─ montar_video.mjs      # [4/4] MP4 via html-video (Chromium + ffmpeg)
 │  ├─ gerar_pdf.mjs         # [5/5] PDF de estudo enriquecido (llama-server + Playwright)
 │  ├─ servidor.mjs          # backend web (HTTP + SSE) da interface
@@ -220,7 +220,18 @@ npx playwright-core install chromium   # a partir de node_modules/playwright-cor
 | `ZIMAGE_CLIP` | CLIP do Z-Image | `qwen\qwen3_4b_fp8_scaled.safetensors` |
 | `ZIMAGE_VAE` | VAE | `FLUX-Anime-VAE-B2.safetensors` |
 | `ZIMAGE_LORA` | LoRA de estilo | `z-image\z-image-anime-01.safetensors` |
-| `VOZ` | Voz do edge-tts | `pt-BR-AntonioNeural` |
+| `TTS` | Seletor de TTS: `qwen` (clone de voz, padrão) | `edge-tts` (fallback) | `qwen` |
+| `QWEN_ROOT` | Raiz do engine Qwen3-TTS | `E:/llama.cpp/qwen3-tts-gguf` |
+| `QWEN_MODEL` | Subpasta do modelo GGUF | `model-base` |
+| `QWEN_REF` | WAV da voz de referência | `<root>/voz-base/fernando.wav` |
+| `QWEN_REF_START` / `QWEN_REF_END` | Trecho da referência (s) | `30` / `45` |
+| `QWEN_REF_TEXTO` | Transcrição exata do trecho de referência | (transcrição do Fernando) |
+| `QWEN_MAX_STEPS` | Máx. códigos de áudio (300 ≈ 24s) | `600` |
+| `QWEN_TEMP` | Temperatura de amostragem | `0.6` |
+| `QWEN_SEED` / `QWEN_SUB_SEED` | Seeds para reprodução | `42` / `45` |
+| `QWEN_ZERO_SHOT` | `1` = zero-shot (sem clone, robótico) | `0` |
+| `QWEN_ONNX_PROVIDER` | Provider onnxruntime | `CUDA` |
+| `VOZ` | Voz do edge-tts (fallback) | `pt-BR-AntonioNeural` |
 | `PULAR_ROTEIRO` | `1` pula a geração do roteiro | — |
 | `PULAR_ENRIQUECIMENTO` | `1` pula o conteúdo complementar do PDF (usa só a narração) | — |
 | `PORTA` | Porta do servidor web (precede `.config.json`) | `5176` |
@@ -239,3 +250,4 @@ npx playwright-core install chromium   # a partir de node_modules/playwright-cor
 - O servidor web reutiliza os scripts via spawn; `montar_video.mjs` **sempre** via spawn.
 - A porta padrão é `5176` justamente para não colidir com a convenção `5173` do Vite. Se o navegador abrir o servidor errado (outro projeto na mesma porta), confira com `netstat -ano | findstr :5176` e use `http://127.0.0.1:5176/`.
 - Leitura de JSON via PowerShell pode distorcer acentos; os arquivos são UTF-8.
+- `scripts/smoke.mjs` valida sintaxe, binários (ffmpeg/ffprobe), cache do Chromium, **Qwen3-TTS** (engine + voz + import python) e serviços (llama `/v1/models`, Comfy `/system_stats`); exit 0/1.
