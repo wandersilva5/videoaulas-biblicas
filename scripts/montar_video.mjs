@@ -27,7 +27,7 @@ import hfAdapter from '@html-video/adapter-hyperframes';
 const execFileAsync = promisify(execFile);
 const HTML_VIDEO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-const FPS = Number(process.env.VIDEO_FPS) || 30;
+const FPS = Number(process.env.VIDEO_FPS) || 24;
 const WIDTH = Number(process.env.VIDEO_WIDTH) || 1920;
 const HEIGHT = Number(process.env.VIDEO_HEIGHT) || 1080;
 const SLIDE_PADDING_SEC = process.env.VIDEO_PADDING !== undefined && process.env.VIDEO_PADDING !== '' ? Number(process.env.VIDEO_PADDING) : 0.3;

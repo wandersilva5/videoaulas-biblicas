@@ -172,8 +172,9 @@ const CSS = `
 @page { size: A4; margin: 0; }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; color: #22303f; }
-.page { width: 210mm; min-height: 297mm; position: relative; page-break-after: always; }
+.page { width: 210mm; min-height: 296mm; position: relative; page-break-after: always; }
 .page:last-child { page-break-after: auto; }
+.cover { min-height: 297mm; }
 
 /* ---------- Capas ---------- */
 .cover {
@@ -228,9 +229,9 @@ body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; color: #22
 .rodape-pagina { margin-top: auto; display: flex; justify-content: space-between; color: #9db1c8; font-size: 8.5pt; border-top: 1px solid #e8e2d2; padding-top: 3mm; }
 
 /* ---------- Referências ---------- */
-.referencias { list-style: none; margin-top: 7mm; }
-.referencias li { display: flex; align-items: baseline; gap: 5mm; font-size: 12.5pt; color: #0b1320; font-weight: 600; padding: 3.5mm 4mm; border-bottom: 1px solid #f0ead8; }
-.referencias .n { color: #e0b45a; font-weight: 700; font-size: 9pt; flex: 0 0 auto; }
+.referencias { list-style: none; margin-top: 6mm; }
+.referencias li { display: flex; align-items: baseline; gap: 4mm; font-size: 10.5pt; color: #0b1320; font-weight: 600; padding: 1.6mm 3mm; border-bottom: 1px solid #f0ead8; }
+.referencias .n { color: #e0b45a; font-weight: 700; font-size: 8.5pt; flex: 0 0 auto; }
 `;
 
 function capaInicial(roteiro, dataStr) {
@@ -318,7 +319,7 @@ function paginaConteudo({ kicker, titulo, pontos, narracao, citacao, notas, nota
   </section>`;
 }
 
-function paginaReferencias(refs, pagina, total, tituloAula) {
+function paginaReferencias(refs, pagina, total, tituloAula, cont = false) {
   const itens = refs.map((r, i) => `<li><span class="n">${String(i + 1).padStart(2, '0')}</span>${esc(r)}</li>`).join('');
   return `
   <section class="page conteudo">
@@ -326,9 +327,9 @@ function paginaReferencias(refs, pagina, total, tituloAula) {
       <span class="marca">✦ Teologia Pra Todos</span>
       <span class="aula">${esc(tituloAula)}</span>
     </header>
-    <div class="kicker">Apêndice</div>
-    <h2>Referências Bíblicas</h2>
-    <p class="narracao">Versículos citados ao longo da aula, na ordem em que aparecem.</p>
+    <div class="kicker">${cont ? 'Apêndice · Continuação' : 'Apêndice'}</div>
+    <h2>${cont ? 'Referências Bíblicas (cont.)' : 'Referências Bíblicas'}</h2>
+    ${cont ? '' : '<p class="narracao">Versículos citados ao longo da aula, na ordem em que aparecem.</p>'}
     <ol class="referencias">${itens}</ol>
     <footer class="rodape-pagina">
       <span>Página ${pagina} de ${total}</span>
@@ -336,6 +337,8 @@ function paginaReferencias(refs, pagina, total, tituloAula) {
     </footer>
   </section>`;
 }
+
+const REFS_POR_PAGINA = 22;
 
 function paginaMaterialExtra(texto, pagina, total, tituloAula) {
   const paragrafosHtml = paragrafos(texto)
@@ -434,8 +437,10 @@ export function montarHtml(roteiro, { totalPaginas } = {}) {
   }
 
   if (temRefs) {
-    partes.push(paginaReferencias(referencias, pagina, total, tituloAula));
-    pagina += 1;
+    for (let i = 0; i < referencias.length; i += REFS_POR_PAGINA) {
+      partes.push(paginaReferencias(referencias.slice(i, i + REFS_POR_PAGINA), pagina, total, tituloAula, i > 0));
+      pagina += 1;
+    }
   }
 
   partes.push(capaFinal(roteiro));

@@ -530,6 +530,7 @@ function renderEtapa3(el) {
         ${badge}
         ${download}
         <button class="btn btn-mini regen" data-action="regen-narracao" data-slide="${it.id}">↻ regenerar</button>
+        ${it.audio.existe ? `<button class="btn btn-mini btn-perigo" data-action="del-narracao" data-slide="${it.id}" title="Apagar este MP3">🗑</button>` : ''}
       </div>`;
     })
     .join('');
@@ -575,7 +576,7 @@ function renderEtapa4(el) {
     <div class="cartao">
       <div class="video-config">
         <label>FPS
-          <select id="cfg-fps"><option>24</option><option selected>30</option><option>60</option></select>
+          <select id="cfg-fps"><option selected>24</option><option>30</option><option>60</option></select>
         </label>
         <label>Resolução
           <select id="cfg-res">
@@ -797,6 +798,13 @@ $('#etapa-container').addEventListener('click', async (ev) => {
   }
   if (acao === 'regen-narracao') {
     return rodarJob(api(`/api/narracao/${estado.slug}`, { method: 'POST', body: JSON.stringify({ slideId }) }), 'Narração regenerada.');
+  }
+  if (acao === 'del-narracao') {
+    const mapa = { intro: 'Introdução', conclusao: 'Conclusão' };
+    const it = (estado.artefatos?.slides || []).find((s) => s.id === slideId);
+    const rotulo = it?.titulo || mapa[slideId] || slideId;
+    if (!confirm(`Apagar o áudio de "${rotulo}"?`)) return;
+    return rodarJob(api(`/api/narracao/${estado.slug}`, { method: 'DELETE', body: JSON.stringify({ slideId }) }), 'Áudio apagado.');
   }
   if (acao === 'regenerar-desatualizados-narracao') {
     return rodarJob(api(`/api/narracao/${estado.slug}`, { method: 'POST', body: JSON.stringify({}) }), 'Narrações atualizadas.');

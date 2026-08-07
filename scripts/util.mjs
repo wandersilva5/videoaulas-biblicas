@@ -33,14 +33,19 @@ export function qwenEnv(env = process.env) {
     QWEN_ROOT: env.QWEN_ROOT || 'E:/llama.cpp/qwen3-tts-gguf',
     QWEN_PYTHON: env.QWEN_PYTHON || 'python',
     QWEN_MODEL: env.QWEN_MODEL || 'model-base',
-    QWEN_REF: env.QWEN_REF || join(ROOT, 'voz-base', 'fernando.wav'),
-    QWEN_REF_START: env.QWEN_REF_START || '30',
-    QWEN_REF_END: env.QWEN_REF_END || '45',
+    QWEN_REF: env.QWEN_REF || join(ROOT, 'voz-base', 'vander-24k.wav'),
+    QWEN_REF_START: env.QWEN_REF_START || '0',
+    QWEN_REF_END: env.QWEN_REF_END || '7.2',
     QWEN_REF_TEXTO:
       env.QWEN_REF_TEXTO ||
-      'As escritas Sagradas parecem não querer mostrar que realmente estão dizendo. Resta então acumular, um grande números de suposições e discussões em muitas mesas de estudos. Afinal',
+      'Bem-vindos a mais uma videoaula. Hoje vamos estudar a Palavra de Deus com atenção e fé.',
     QWEN_MAX_STEPS: env.QWEN_MAX_STEPS || '600',
-    QWEN_TEMP: env.QWEN_TEMP || '0.6',
+    QWEN_TEMP: env.QWEN_TEMP || '0.9',
+    QWEN_SUB_TEMP: env.QWEN_SUB_TEMP || '0.6',
+    QWEN_TOP_P: env.QWEN_TOP_P || '1.0',
+    QWEN_TOP_K: env.QWEN_TOP_K || '50',
+    QWEN_MIN_P: env.QWEN_MIN_P || '0.05',
+    QWEN_REPEAT_PENALTY: env.QWEN_REPEAT_PENALTY || '1.1',
     QWEN_SEED: env.QWEN_SEED || '42',
     QWEN_SUB_SEED: env.QWEN_SUB_SEED || '45',
     QWEN_ZERO_SHOT: env.QWEN_ZERO_SHOT || '0',
@@ -105,6 +110,85 @@ export function slugDe(t) {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Tenta reparar um JSON truncado/malformado antes de abandonar:
+ *  - remove vírgulas soltas (ex.: `[1, 2, ]`, `{"a": 1,}`)
+ *  - fecha string aberta no fim (modelo cortou no meio de uma narração)
+ *  - fecha colchetes/chaves desbalanceados (append do que falta)
+ * Retorna o texto reparado (pode continuar inválido — o parse decide).
+ */
+export function repararJsonTruncado(s) {
+  let t = String(s ?? '').trim();
+  if (!t) return t;
+
+  // 1) Vírgulas antes de fechamento
+  t = t.replace(/,\s*([\]}])/g, '$1');
+
+  // 2) Varredura para achar string aberta e delimitadores desbalanceados
+  const pilha = [];
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{' || ch === '[') {
+      pilha.push(ch);
+    } else if (ch === '}' || ch === ']') {
+      if (pilha.length) {
+        const topo = pilha[pilha.length - 1];
+        if ((topo === '{' && ch === '}') || (topo === '[' && ch === ']')) pilha.pop();
+      }
+    }
+  }
+
+  // 3) Fecha string aberta no fim (valor truncado vira string incompleta válida)
+  if (inString) t += '"';
+
+  // 4) Remove vírgula final solta (ex.: termina em `,`)
+  t = t.replace(/,\s*$/, '');
+
+  // 5) Fecha os delimitadores que sobraram na pilha
+  while (pilha.length) {
+    t += pilha.pop() === '{' ? '}' : ']';
+  }
+  return t;
+}
+
+/** Extrai JSON de uma resposta do modelo (fences/prosa), reparando quando possível. */
+export function extrairJson(content) {
+  const candidatos = [];
+  const puro = String(content ?? '').trim();
+  if (puro) candidatos.push(puro);
+  const semFence = puro.replace(/```json/gi, '').replace(/```/g, '').trim();
+  if (semFence && semFence !== puro) candidatos.push(semFence);
+  const inicio = semFence.indexOf('{');
+  if (inicio !== -1) {
+    const fim = semFence.lastIndexOf('}');
+    if (fim >= inicio) candidatos.push(semFence.slice(inicio, fim + 1));
+    candidatos.push(semFence.slice(inicio));
+  }
+  for (const c of candidatos) {
+    try {
+      return JSON.parse(c);
+    } catch {
+      /* segue */
+    }
+    try {
+      return JSON.parse(repararJsonTruncado(c));
+    } catch {
+      /* tenta o próximo candidato */
+    }
+  }
+  throw new Error('Resposta do modelo não contém JSON válido. Resposta: ' + puro.slice(0, 400));
 }
 
 /** Hash SHA-1 do texto/prompt — usado no manifesto para detectar itens desatualizados. */

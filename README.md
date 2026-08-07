@@ -238,7 +238,7 @@ npx playwright-core install chromium   # a partir de node_modules/playwright-cor
 | `LLAMA_EXE` | Executável do llama-server (usado pelo `iniciar.bat`) | `E:\llama.cpp\llama-server.exe` |
 | `COMFY_DIR` | Raiz do ComfyUI portable (usado pelo `iniciar.bat`) | `D:\ComfyUI_windows_portable` |
 | `KREA2_SEED_BASE` | Seed base das imagens (regeneração usa seed aleatório) | `1000` |
-| `VIDEO_FPS` | FPS do vídeo | `30` |
+| `VIDEO_FPS` | FPS do vídeo | `24` |
 | `VIDEO_WIDTH` | Largura do vídeo | `1920` |
 | `VIDEO_HEIGHT` | Altura do vídeo | `1080` |
 | `VIDEO_PADDING` | Pausa (s) entre slides/frames | `0.3` |

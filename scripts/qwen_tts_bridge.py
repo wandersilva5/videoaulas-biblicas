@@ -95,7 +95,12 @@ def main():
     inicio = float(os.environ.get("QWEN_REF_START", "2.9"))
     fim = float(os.environ.get("QWEN_REF_END", "17.9"))
     max_steps = int(os.environ.get("QWEN_MAX_STEPS", "600"))
-    temperatura = float(os.environ.get("QWEN_TEMP", "0.6"))
+    temperatura = float(os.environ.get("QWEN_TEMP", "0.9"))
+    sub_temperatura = float(os.environ.get("QWEN_SUB_TEMP", "0.6"))
+    top_p = float(os.environ.get("QWEN_TOP_P", "1.0"))
+    top_k = int(os.environ.get("QWEN_TOP_K", "50"))
+    min_p = float(os.environ.get("QWEN_MIN_P", "0.05"))
+    repeat_penalty = float(os.environ.get("QWEN_REPEAT_PENALTY", "1.1"))
     zero_shot = os.environ.get("QWEN_ZERO_SHOT", "0") == "1"
 
     if not ref_wav or not ref_texto:
@@ -120,7 +125,11 @@ def main():
     config = TTSConfig(
         max_steps=max_steps,
         temperature=temperatura,
-        sub_temperature=temperatura,
+        sub_temperature=sub_temperatura,
+        top_p=top_p,
+        top_k=top_k,
+        min_p=min_p,
+        repeat_penalty=repeat_penalty,
         seed=int(os.environ.get("QWEN_SEED", "42")),
         sub_seed=int(os.environ.get("QWEN_SUB_SEED", "45")),
         streaming=False,

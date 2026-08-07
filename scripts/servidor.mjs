@@ -715,6 +715,29 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
 
+    // --- Narração: apagar áudio(s) ---
+    if (recurso === 'narracao' && req.method === 'DELETE') {
+      const body = await lerBody(req);
+      const roteiro = await lerRoteiro(slug);
+      const outDir = join(OUTPUT_DIR, slug);
+      const itens = itensDoRoteiro(roteiro);
+      const alvos = body.slideId ? itens.filter((it) => it.id === body.slideId) : itens;
+      if (body.slideId && alvos.length === 0) {
+        return json(res, 400, { erro: `Item "${body.slideId}" não encontrado` });
+      }
+      let removidos = 0;
+      for (const it of alvos) {
+        const mp3 = join(outDir, `${it.prefix}-narracao.mp3`);
+        const tmp = join(outDir, `${it.prefix}-narracao.tmp.wav`);
+        if (existsSync(mp3)) { await unlink(mp3); removidos++; }
+        if (existsSync(tmp)) await unlink(tmp);
+      }
+      const manifest = await lerManifesto(slug);
+      for (const it of alvos) delete manifest.audio[it.id];
+      await salvarManifesto(slug, manifest);
+      return json(res, 200, { ok: true, removidos });
+    }
+
     // --- Vídeo ---
     if (recurso === 'video' && req.method === 'POST') {
       const body = await lerBody(req);
@@ -727,7 +750,7 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { erro: `Faltam artefatos: ${faltando.join(' e ')}. Gere-os antes de montar o vídeo.` });
       }
       const env = {
-        VIDEO_FPS: String(body.fps ?? 30),
+        VIDEO_FPS: String(body.fps ?? 24),
         VIDEO_WIDTH: String(body.width ?? 1920),
         VIDEO_HEIGHT: String(body.height ?? 1080),
         VIDEO_PADDING: String(body.padding ?? 0.3),
