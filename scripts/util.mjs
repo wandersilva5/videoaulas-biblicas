@@ -40,14 +40,18 @@ export function qwenEnv(env = process.env) {
       env.QWEN_REF_TEXTO ||
       'Bem-vindos a mais uma videoaula. Hoje vamos estudar a Palavra de Deus com atenção e fé.',
     QWEN_MAX_STEPS: env.QWEN_MAX_STEPS || '600',
-    QWEN_TEMP: env.QWEN_TEMP || '0.9',
+    // Temperatura maior no estágio Talker = mais variação emocional/entonação (voz menos monótona).
+    // Repeat penalty maior = mais variação de tom (menos "leitura cadenciada").
+    QWEN_TEMP: env.QWEN_TEMP || '1.2',
     QWEN_SUB_TEMP: env.QWEN_SUB_TEMP || '0.6',
     QWEN_TOP_P: env.QWEN_TOP_P || '1.0',
     QWEN_TOP_K: env.QWEN_TOP_K || '50',
     QWEN_MIN_P: env.QWEN_MIN_P || '0.05',
-    QWEN_REPEAT_PENALTY: env.QWEN_REPEAT_PENALTY || '1.1',
-    QWEN_SEED: env.QWEN_SEED || '42',
-    QWEN_SUB_SEED: env.QWEN_SUB_SEED || '45',
+    QWEN_REPEAT_PENALTY: env.QWEN_REPEAT_PENALTY || '1.4',
+    // Seeds vazios = derivados do hash do texto no bridge (cada slide varia, mas é
+    // determinístico por texto). Defina QWEN_SEED/QWEN_SUB_SEED para fixar tudo num valor.
+    QWEN_SEED: env.QWEN_SEED || '',
+    QWEN_SUB_SEED: env.QWEN_SUB_SEED || '',
     QWEN_ZERO_SHOT: env.QWEN_ZERO_SHOT || '0',
     QWEN_ONNX_PROVIDER: env.QWEN_ONNX_PROVIDER || 'CUDA',
   };

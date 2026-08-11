@@ -13,6 +13,7 @@ e finaliza o processo de forma limpa (termina os workers do decoder).
 """
 
 import argparse
+import hashlib
 import os
 import sys
 import time
@@ -77,6 +78,13 @@ def hard_shutdown(engine):
         pass
 
 
+def seed_do_texto(texto, suf=""):
+    """Seed determinístico derivado do texto (se QWEN_SEED vazio) — cada trecho
+    varia a prosódia naturalmente, mas o mesmo texto gera o mesmo áudio."""
+    h = hashlib.md5((texto + suf).encode("utf-8")).hexdigest()
+    return int(h[:8], 16)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--texto", default=os.environ.get("TEXTO", ""))
@@ -122,6 +130,11 @@ def main():
         print("ERRO: set_voice falhou", flush=True)
         sys.exit(1)
 
+    seed_env = os.environ.get("QWEN_SEED", "")
+    sub_seed_env = os.environ.get("QWEN_SUB_SEED", "")
+    seed = int(seed_env) if seed_env else seed_do_texto(texto)
+    sub_seed = int(sub_seed_env) if sub_seed_env else seed_do_texto(texto, ":sub")
+
     config = TTSConfig(
         max_steps=max_steps,
         temperature=temperatura,
@@ -130,8 +143,8 @@ def main():
         top_k=top_k,
         min_p=min_p,
         repeat_penalty=repeat_penalty,
-        seed=int(os.environ.get("QWEN_SEED", "42")),
-        sub_seed=int(os.environ.get("QWEN_SUB_SEED", "45")),
+        seed=seed,
+        sub_seed=sub_seed,
         streaming=False,
     )
     t0 = time.time()

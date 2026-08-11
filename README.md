@@ -227,8 +227,10 @@ npx playwright-core install chromium   # a partir de node_modules/playwright-cor
 | `QWEN_REF_START` / `QWEN_REF_END` | Trecho da referência (s) | `30` / `45` |
 | `QWEN_REF_TEXTO` | Transcrição exata do trecho de referência | (transcrição do Fernando) |
 | `QWEN_MAX_STEPS` | Máx. códigos de áudio (300 ≈ 24s) | `600` |
-| `QWEN_TEMP` | Temperatura de amostragem | `0.6` |
-| `QWEN_SEED` / `QWEN_SUB_SEED` | Seeds para reprodução | `42` / `45` |
+| `QWEN_TEMP` | Temperatura do estágio Talker (maior = mais variação emocional/energia) | `1.2` |
+| `QWEN_REPEAT_PENALTY` | Penalidade de repetição (maior = mais variação de tom) | `1.4` |
+| `QWEN_SEED` / `QWEN_SUB_SEED` | Seeds fixos; vazios = derivados do hash do texto (cada trecho varia, determinístico por texto) | vazio |
+| `AUDIO_LOUDNORM` | Filtro ffmpeg de loudness no MP3 final (`0` desliga) | `loudnorm=I=-16:TP=-1.5:LRA=11` |
 | `QWEN_ZERO_SHOT` | `1` = zero-shot (sem clone, robótico) | `0` |
 | `QWEN_ONNX_PROVIDER` | Provider onnxruntime | `CUDA` |
 | `VOZ` | Voz do edge-tts (fallback) | `pt-BR-AntonioNeural` |

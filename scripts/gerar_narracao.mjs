@@ -6,6 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { prefixoNarracao, hashDe, qwenEnv } from './util.mjs';
 const TTS = process.env.TTS || 'qwen';
 const VOZ = process.env.VOZ || 'pt-BR-AntonioNeural';
+// Loudness consistente no MP3 final (compressão leve + ganho) — dá "presença"
+// e evita trechos baixos que "dão sono". Defina AUDIO_LOUDNORM=0 para desligar.
+const AUDIO_LOUDNORM = process.env.AUDIO_LOUDNORM || 'loudnorm=I=-16:TP=-1.5:LRA=11';
+const LOUDNORM_LIGADO = AUDIO_LOUDNORM && AUDIO_LOUDNORM !== '0' && AUDIO_LOUDNORM.toLowerCase() !== 'off';
 
 // Qwen3-TTS (clone de voz local). Padrões vindos de util.mjs (qwenEnv).
 const QWEN = qwenEnv();
@@ -77,16 +81,39 @@ export function normalizarReferenciasParaTts(texto) {
 
 function tts(texto, outPath) {
   return new Promise((resolve, reject) => {
-    const proc = spawn('edge-tts', ['--voice', VOZ, '--text', texto, '--write-media', outPath], {
+    const tmpMp3 = outPath.replace(/\.mp3$/, '.tmp-edge.mp3');
+    const proc = spawn('edge-tts', ['--voice', VOZ, '--text', texto, '--write-media', tmpMp3], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let err = '';
     proc.stderr.on('data', (d) => (err += d.toString()));
     proc.on('error', reject);
-    proc.on('exit', (code) => {
-      if (code === 0) resolve(outPath);
-      else reject(new Error(`edge-tts exit ${code}: ${err.slice(0, 300)}`));
+    proc.on('exit', async (code) => {
+      if (code !== 0) reject(new Error(`edge-tts exit ${code}: ${err.slice(0, 300)}`));
+      else {
+        try {
+          await finalizarAudio(tmpMp3, outPath);
+          try { unlinkSync(tmpMp3); } catch { /* já foi limpo */ }
+          resolve(outPath);
+        } catch (e) {
+          reject(e);
+        }
+      }
     });
+  });
+}
+
+/** Re-codifica o áudio aplicando loudness consistente (compressão leve) no MP3 final. */
+function finalizarAudio(tmp, outMp3) {
+  return new Promise((resolve, reject) => {
+    const args = LOUDNORM_LIGADO
+      ? ['-y', '-i', tmp, '-af', AUDIO_LOUDNORM, '-codec:a', 'libmp3lame', '-b:a', '128k', outMp3]
+      : ['-y', '-i', tmp, '-codec:a', 'libmp3lame', '-b:a', '128k', outMp3];
+    const ff = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let ferr = '';
+    ff.stderr.on('data', (d) => (ferr += d.toString()));
+    ff.on('error', reject);
+    ff.on('exit', (c) => (c === 0 ? resolve() : reject(new Error(`ffmpeg exit ${c}: ${ferr.slice(0, 300)}`))));
   });
 }
 
@@ -128,15 +155,7 @@ function ttsQwen(texto, outMp3) {
     proc.on('exit', async (code) => {
       try {
         if (code !== 0) throw new Error(`qwen bridge exit ${code}: ${log.slice(0, 500)}`);
-        await new Promise((res, rej) => {
-          const ff = spawn('ffmpeg', ['-y', '-i', wavTmp, '-codec:a', 'libmp3lame', '-b:a', '128k', outMp3], {
-            stdio: ['ignore', 'pipe', 'pipe'],
-          });
-          let ferr = '';
-          ff.stderr.on('data', (d) => (ferr += d.toString()));
-          ff.on('error', rej);
-          ff.on('exit', (c) => (c === 0 ? res() : rej(new Error(`ffmpeg exit ${c}: ${ferr.slice(0, 300)}`))));
-        });
+        await finalizarAudio(wavTmp, outMp3);
         try { unlinkSync(wavTmp); } catch { /* já foi limpo */ }
         resolve(outMp3);
       } catch (e) {
