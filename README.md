@@ -21,7 +21,7 @@ Pipeline local que transforma um **tópico de teologia** em uma **videoaula narr
 Quatro etapas encadeadas, cada uma consumindo o resultado da anterior:
 
 1. **`gerar_roteiro.mjs`** — chama o **llama-server** (OpenAI-compatible) com um prompt de professor de teologia bíblica e gera o `roteiro.json` (título, introdução, ≥15 slides com pontos/narração/referência bíblica/prompt de imagem, conclusão).
-2. **`gerar_imagens.mjs`** — envia cada `imagem_prompt` ao **ComfyUI** (workflow Z-Image Turbo) e salva `slide-NN.png`.
+2. **`gerar_imagens.mjs`** — envia cada `imagem_prompt` ao **ComfyUI** (workflow Anima-simples) e salva `slide-NN.png`.
 3. **`gerar_narracao.mjs`** — usa o **Qwen3-TTS** (clone de voz local, padrão `TTS=qwen`) para gerar os MP3s de narração (introdução, cada slide, conclusão) com fallback para `edge-tts` (voz `pt-BR-AntonioNeural`, env `VOZ`).
 4. **`montar_video.mjs`** — consome o `roteiro.json` + PNGs + MP3s e renderiza o MP4 final via **html-video** (Chromium headless + ffmpeg), com frames animados, marca d'água "TEOLOGIA PRA TODOS" e áudio mixado.
 
@@ -38,20 +38,18 @@ O pipeline depende de quatro serviços, todos locais e específicos da máquina:
 | **Qwen3-TTS** (engine GGUF + onnxruntime) | local (`E:\llama.cpp\qwen3-tts-gguf`, env `QWEN_ROOT`) | Narração via clone de voz (env `TTS=qwen` padrão; fallback `edge-tts`) |
 | **ffmpeg / ffprobe** (no PATH) | — | Usados pelo `montar_video.mjs` |
 
-### Workflow Z-Image Turbo (ComfyUI)
+### Workflow Anima-simples (ComfyUI)
 
-As imagens usam o workflow **Z-Image Turbo**:
+As imagens usam o workflow **Anima-simples** (mais rápido que o Z-Image Turbo):
 
-- `UnetLoaderGGUFAdvanced` com `z-image\z_image_turbo-Q4_K_M.gguf`
-- `CLIPLoader` tipo `lumina2` com `qwen\qwen3_4b_fp8_scaled.safetensors`
-- LoRA `z-image\z-image-anime-01.safetensors` (strength 0.8)
-- `ModelSamplingAuraFlow` (shift 7)
-- VAE `FLUX-Anime-VAE-B2.safetensors`
-- `KSampler`: 9 passos, cfg 1.0, euler/normal, 1152x640
+- `UNETLoader` com `anima\animeStudio_v4Anima.safetensors`
+- `CLIPLoader` tipo `qwen_image` com `qwen\qwen_3_06b_base.safetensors`
+- LoRA `Anima\minimalistflat-000006.safetensors` (strength 1.0)
+- `ControlOrderFreeMemory`
+- VAE `qwen_image_vae.safetensors`
+- `KSampler`: 8 passos, cfg 5, er_sde/simple, 1152x640
 
 O diretório de saída do ComfyUI é fixo em `D:\ComfyUI_windows_portable\ComfyUI\output` (env `COMFY_OUTPUT_DIR`).
-
-> **Gotcha conhecido**: o custom node `ComfyUI-GGUF-FantasyTalking` sobrescreve `UnetLoaderGGUF` e `CLIPLoaderGGUF` com retornos quebrados (tipo `WANVIDEOMODEL` e lista de arquiteturas antiga sem `qwen3`). Por isso o pipeline usa `UnetLoaderGGUFAdvanced` + `CLIPLoader` (safetensors), que não são afetados.
 
 ## Início rápido
 
@@ -132,7 +130,7 @@ videoaulas-teologia/
 ├─ scripts/
 │  ├─ pipeline.mjs          # orquestra as 4 etapas em sequência (CLI)
 │  ├─ gerar_roteiro.mjs     # [1/4] roteiro via llama-server
-│  ├─ gerar_imagens.mjs     # [2/4] slides via ComfyUI (Z-Image Turbo)
+│  ├─ gerar_imagens.mjs     # [2/4] slides via ComfyUI (Anima-simples)
 │  ├─ gerar_narracao.mjs    # [3/4] MP3s via Qwen3-TTS (clone de voz, fallback edge-tts)
 │  ├─ montar_video.mjs      # [4/4] MP4 via html-video (Chromium + ffmpeg)
 │  ├─ gerar_pdf.mjs         # [5/5] PDF de estudo enriquecido (llama-server + Playwright)
@@ -216,10 +214,10 @@ npx playwright-core install chromium   # a partir de node_modules/playwright-cor
 | `LLAMA_MODELO` | Nome do modelo (`model`) enviado nas chamadas de roteiro/enriquecimento (precede o basename de `LLAMA_MODEL`) | `Qwen3.5-9B-Q4_K_M.gguf` |
 | `COMFY_URL` | URL do ComfyUI | `http://127.0.0.1:8188` |
 | `COMFY_OUTPUT_DIR` | Saída de imagens do ComfyUI | `D:\ComfyUI_windows_portable\ComfyUI\output` |
-| `ZIMAGE_UNET` | GGUF do UNet Z-Image Turbo | `z-image\z_image_turbo-Q4_K_M.gguf` |
-| `ZIMAGE_CLIP` | CLIP do Z-Image | `qwen\qwen3_4b_fp8_scaled.safetensors` |
-| `ZIMAGE_VAE` | VAE | `FLUX-Anime-VAE-B2.safetensors` |
-| `ZIMAGE_LORA` | LoRA de estilo | `z-image\z-image-anime-01.safetensors` |
+| `ANIMA_UNET` | UNet do modelo Anima (mais rápido que o Z-Image) | `anima\animeStudio_v4Anima.safetensors` |
+| `ANIMA_CLIP` | CLIP Qwen3 qwen_image | `qwen\qwen_3_06b_base.safetensors` |
+| `ANIMA_VAE` | VAE | `qwen_image_vae.safetensors` |
+| `ANIMA_LORA` | LoRA de estilo flat | `Anima\minimalistflat-000006.safetensors` |
 | `TTS` | Seletor de TTS: `qwen` (clone de voz, padrão) | `edge-tts` (fallback) | `qwen` |
 | `QWEN_ROOT` | Raiz do engine Qwen3-TTS | `E:/llama.cpp/qwen3-tts-gguf` |
 | `QWEN_MODEL` | Subpasta do modelo GGUF | `model-base` |

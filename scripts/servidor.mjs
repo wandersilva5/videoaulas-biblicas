@@ -4,7 +4,8 @@ import { existsSync, createReadStream, statSync } from 'node:fs';
 import { join, dirname, basename, extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { slugDe, hashDe, esc, MIME, itensDoRoteiro, limparProjetosAntigosHtmlVideo, qwenEnv } from './util.mjs';
+import { slugDe, hashDe, esc, MIME, itensDoRoteiro, limparProjetosAntigosHtmlVideo, qwenEnv, truncarMaterial, MATERIAL_MAX_CHARS, imagemPromptIntro, imagemPromptConclusao } from './util.mjs';
+import { extrairTextoPDF } from './pdf_texto.mjs';
 
 const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SCRIPTS_DIR, '..');
@@ -17,10 +18,10 @@ const DEFAULTS = {
   LLAMA_URL: 'http://127.0.0.1:8091',
   COMFY_URL: 'http://127.0.0.1:8188',
   COMFY_OUTPUT_DIR: 'D:\\ComfyUI_windows_portable\\ComfyUI\\output',
-  ZIMAGE_UNET: 'z-image\\z_image_turbo-Q4_K_M.gguf',
-  ZIMAGE_CLIP: 'qwen\\qwen3_4b_fp8_scaled.safetensors',
-  ZIMAGE_VAE: 'FLUX-Anime-VAE-B2.safetensors',
-  ZIMAGE_LORA: 'z-image\\z-image-anime-01.safetensors',
+  ANIMA_UNET: 'anima\\animeStudio_v4Anima.safetensors',
+  ANIMA_CLIP: 'qwen\\qwen_3_06b_base.safetensors',
+  ANIMA_VAE: 'qwen_image_vae.safetensors',
+  ANIMA_LORA: 'Anima\\minimalistflat-000006.safetensors',
   VOZ: 'pt-BR-AntonioNeural',
   PORTA: '5176',
   LLAMA_EXE: 'E:\\llama.cpp\\llama-server.exe',
@@ -216,22 +217,39 @@ async function artefatos(slug) {
     };
   };
 
+  const imagemDe = (id, p, prompt) => {
+    const esperado = manifest.imagem?.[id];
+    return {
+      existe: existsSync(p),
+      mtime: mtimeDe(p),
+      desatualizado: esperado ? esperado !== hashDe(prompt) : false,
+    };
+  };
+
+  const pad = (n) => String(n).padStart(2, '0');
+  const introImg = join(outDir, 'slide-00.png');
+  const conclImg = join(outDir, `slide-${pad(roteiro.slides.length + 1)}.png`);
+
   const slides = roteiro.slides.map((s, i) => {
     const item = itens[i + 1];
-    const img = join(outDir, `slide-${String(i + 1).padStart(2, '0')}.png`);
-    const esperado = manifest.imagem?.[s.id];
+    const img = join(outDir, `slide-${pad(i + 1)}.png`);
     return {
       id: s.id,
       idx: i + 1,
       titulo: s.titulo,
-      imagem: {
-        existe: existsSync(img),
-        mtime: mtimeDe(img),
-        desatualizado: esperado ? esperado !== hashDe(s.imagem_prompt) : false,
-      },
+      imagem: imagemDe(s.id, img, s.imagem_prompt),
       audio: audioDe(item),
     };
   });
+
+  const intro = {
+    ...audioDe(itens[0]),
+    imagem: imagemDe('intro', introImg, imagemPromptIntro(roteiro)),
+  };
+  const conclusao = {
+    ...audioDe(itens[itens.length - 1]),
+    imagem: imagemDe('conclusao', conclImg, imagemPromptConclusao(roteiro)),
+  };
 
   const videos = (await readdir(outDir))
     .filter((f) => f.toLowerCase().endsWith('.mp4'))
@@ -245,9 +263,9 @@ async function artefatos(slug) {
   return {
     slug,
     roteiroMtime,
-    intro: audioDe(itens[0]),
+    intro,
     slides,
-    conclusao: audioDe(itens[itens.length - 1]),
+    conclusao,
     video: {
       existe: !!ultimo,
       mtime: ultimo?.mtime ?? null,
@@ -262,7 +280,7 @@ async function artefatos(slug) {
       arquivo: `${slug}-estudo.pdf`,
     },
     audioCompleto: [itens[0], ...itens.slice(1, -1), itens[itens.length - 1]].every((it) => audioDe(it).existe),
-    imagensCompletas: slides.every((s) => s.imagem.existe),
+    imagensCompletas: [intro, ...slides, conclusao].every((x) => x.imagem.existe),
   };
 }
 
@@ -610,14 +628,61 @@ const server = createServer(async (req, res) => {
     if (recurso === 'roteiro' && req.method === 'POST') {
       const body = await lerBody(req);
       if (!body.topico) return json(res, 400, { erro: 'Campo "topico" é obrigatório' });
+      const novoSlug = slugDe(body.topico);
+      const args = [join(SCRIPTS_DIR, 'gerar_roteiro.mjs'), body.topico];
+      let material = typeof body.material === 'string' && body.material.trim() ? body.material : null;
+      let pdfExtraido = null;
+
+      // Upload de PDF: decodifica base64, valida assinatura, extrai o texto e
+      // usa-o como material de apoio para a geração do roteiro.
+      if (body.pdf && (body.pdf.base64 || body.pdf.nome)) {
+        const base64 = String(body.pdf.base64 || '')
+          .trim()
+          .replace(/^data:application\/pdf;base64,/i, '');
+        if (!base64) return json(res, 400, { erro: 'base64 do PDF ausente no campo "pdf.base64"' });
+        const bytes = Buffer.from(base64, 'base64');
+        if (bytes.length < 8 || bytes.toString('latin1', 0, 5) !== '%PDF-') {
+          return json(res, 400, { erro: 'O arquivo enviado não é um PDF válido (assinatura %PDF ausente).' });
+        }
+        const outDir = join(OUTPUT_DIR, novoSlug);
+        await mkdir(outDir, { recursive: true });
+        const pdfPath = join(outDir, 'fonte.pdf');
+        await writeFile(pdfPath, bytes);
+        let extraido;
+        try {
+          extraido = extrairTextoPDF(pdfPath);
+        } catch (e) {
+          return json(res, 400, { erro: `Não foi possível ler o texto do PDF: ${e.message}` });
+        }
+        if (!extraido.texto.trim()) {
+          return json(res, 400, { erro: 'Nenhum texto foi extraído do PDF (pode ser escaneado, só imagem).' });
+        }
+        material = extraido.texto;
+        pdfExtraido = {
+          arquivo: 'fonte.pdf',
+          paginas: extraido.paginas,
+          caracteres: extraido.caracteres,
+        };
+      }
+
+      if (material) {
+        const outDir = join(OUTPUT_DIR, novoSlug);
+        await mkdir(outDir, { recursive: true });
+        if (material.length > MATERIAL_MAX_CHARS) {
+          console.error(`[roteiro] material truncado de ${material.length} para ${MATERIAL_MAX_CHARS} caracteres (${novoSlug})`);
+          material = truncarMaterial(material, MATERIAL_MAX_CHARS);
+        }
+        await writeFile(join(outDir, 'material.txt'), material, 'utf8');
+        args.push('--material', join(outDir, 'material.txt'));
+      }
+
       try {
-        await runJob({ etapa: 'roteiro', args: [join(SCRIPTS_DIR, 'gerar_roteiro.mjs'), body.topico] });
+        await runJob({ etapa: 'roteiro', args });
       } catch (e) {
         return json(res, statusDeErroJob(e), { erro: e.message });
       }
-      const novoSlug = slugDe(body.topico);
       const roteiro = await lerRoteiro(novoSlug);
-      return json(res, 200, { slug: novoSlug, roteiro });
+      return json(res, 200, { slug: novoSlug, roteiro, pdf: pdfExtraido });
     }
 
     if (!slug || !ehSlugValido(slug)) return json(res, 400, { erro: 'Slug inválido' });
@@ -650,25 +715,31 @@ const server = createServer(async (req, res) => {
       const body = await lerBody(req);
       const roteiro = await lerRoteiro(slug);
       const outDir = join(OUTPUT_DIR, slug);
+      const padImg = (n) => `slide-${String(n).padStart(2, '0')}.png`;
+      const itemDeImagem = (id) => {
+        if (id === 'intro') return { prompt: imagemPromptIntro(roteiro), arquivo: padImg(0) };
+        if (id === 'conclusao') return { prompt: imagemPromptConclusao(roteiro), arquivo: padImg(roteiro.slides.length + 1) };
+        const idx = roteiro.slides.findIndex((s) => s.id === id);
+        if (idx === -1) return null;
+        return { prompt: roteiro.slides[idx].imagem_prompt, arquivo: padImg(idx + 1) };
+      };
       const backups = [];
-      if (body.slideId) {
-        const idx = roteiro.slides.findIndex((s) => s.id === body.slideId);
-        if (idx === -1) return json(res, 400, { erro: `Slide "${body.slideId}" não encontrado` });
-        const png = join(outDir, `slide-${String(idx + 1).padStart(2, '0')}.png`);
+      const backupDe = async (arquivo) => {
+        const png = join(outDir, arquivo);
         if (existsSync(png)) {
           const bak = png + '.bak';
           await rename(png, bak);
           backups.push({ original: png, backup: bak });
         }
+      };
+      if (body.slideId) {
+        const item = itemDeImagem(body.slideId);
+        if (!item) return json(res, 400, { erro: `Item "${body.slideId}" não encontrado` });
+        await backupDe(item.arquivo);
       } else if (body.recriarTodos) {
-        for (let i = 0; i < roteiro.slides.length; i++) {
-          const png = join(outDir, `slide-${String(i + 1).padStart(2, '0')}.png`);
-          if (existsSync(png)) {
-            const bak = png + '.bak';
-            await rename(png, bak);
-            backups.push({ original: png, backup: bak });
-          }
-        }
+        await backupDe(padImg(0));
+        for (let i = 0; i < roteiro.slides.length; i++) await backupDe(padImg(i + 1));
+        await backupDe(padImg(roteiro.slides.length + 1));
       }
       const env = body.variar ? { KREA2_SEED_BASE: String(Math.floor(Math.random() * 1e9)) } : {};
       try {
@@ -683,10 +754,12 @@ const server = createServer(async (req, res) => {
         return json(res, statusDeErroJob(e), { erro: e.message });
       }
       const manifest = await lerManifesto(slug);
-      const alvos = body.slideId ? [body.slideId] : roteiro.slides.map((s) => s.id);
+      const alvos = body.slideId
+        ? [body.slideId]
+        : ['intro', ...roteiro.slides.map((s) => s.id), 'conclusao'];
       for (const id of alvos) {
-        const s = roteiro.slides.find((x) => x.id === id);
-        if (s) manifest.imagem[id] = hashDe(s.imagem_prompt);
+        const item = itemDeImagem(id);
+        if (item) manifest.imagem[id] = hashDe(item.prompt);
       }
       await salvarManifesto(slug, manifest);
       return json(res, 200, { ok: true });

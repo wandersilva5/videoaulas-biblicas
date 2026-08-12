@@ -100,6 +100,16 @@ a.btn { display: inline-block; text-decoration: none; }
 }
 .nova-aula input:focus { border-color: var(--borda-forte); }
 
+/* ---------- Importar PDF ---------- */
+.nova-aula-pdf {
+  border-top: 1px dashed var(--borda);
+  padding-top: 16px;
+}
+.nova-aula-pdf input[type="file"] {
+  flex: 0 0 auto; max-width: 280px;
+  padding: 8px 12px; font-size: 13px;
+}
+
 /* ---------- Grid de aulas ---------- */
 .grid-aulas {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px;

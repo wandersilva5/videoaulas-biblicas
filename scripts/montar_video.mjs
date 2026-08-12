@@ -132,7 +132,8 @@ function gerarFrameHtml(slide, imagePath, numero, total, tituloAula) {
 </html>`;
 }
 
-function gerarFrameIntro(roteiro) {
+function gerarFrameIntro(roteiro, imagePath) {
+  const imgName = basename(imagePath);
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -141,17 +142,24 @@ function gerarFrameIntro(roteiro) {
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { width: ${WIDTH}px; height: ${HEIGHT}px; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; position: relative; background: #0d1b2a; }
+  .bg { position: absolute; inset: 0; }
+  .bg img { width: 100%; height: 100%; object-fit: cover; }
+  .veil { position: absolute; inset: 0; background:
+    radial-gradient(ellipse 70% 60% at 50% 48%, rgba(13,27,42,0.82) 0%, rgba(13,27,42,0.45) 55%, rgba(13,27,42,0) 78%),
+    linear-gradient(180deg, rgba(13,27,42,0.55) 0%, rgba(13,27,42,0.68) 55%, rgba(13,27,42,0.9) 100%); }
   .halo { position: absolute; width: ${s(900)}px; height: ${s(900)}px; border-radius: 50%; left: 50%; top: 42%; transform: translate(-50%, -50%); background: radial-gradient(circle, rgba(224,180,90,0.28) 0%, rgba(224,180,90,0.05) 55%, transparent 70%); animation: pulse 4s ease-in-out infinite; }
   @keyframes pulse { 0%,100% { transform: translate(-50%,-50%) scale(1); opacity: 0.7; } 50% { transform: translate(-50%,-50%) scale(1.12); opacity: 1; } }
   .inner { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 0 ${s(200)}px; }
-  .brand { position: absolute; top: ${s(70)}px; left: 0; right: 0; text-align: center; font-size: ${s(40)}px; letter-spacing: ${s(10)}px; text-transform: uppercase; color: #e0b45a; font-weight: 700; opacity: 0; animation: fadeUp 0.7s ease-out 0.2s forwards; }
-  .kicker { font-size: ${s(30)}px; letter-spacing: ${s(8)}px; text-transform: uppercase; color: #e0b45a; font-weight: 700; margin-bottom: ${s(30)}px; opacity: 0; animation: fadeUp 0.7s ease-out 0.3s forwards; }
-  h1 { font-size: ${s(96)}px; color: #ffffff; font-weight: 700; line-height: 1.1; margin-bottom: ${s(24)}px; opacity: 0; animation: fadeUp 0.8s ease-out 0.8s forwards; }
-  .sub { font-size: ${s(34)}px; color: #c9d4e0; opacity: 0; animation: fadeUp 0.8s ease-out 1.4s forwards; }
+  .brand { position: absolute; top: ${s(70)}px; left: 0; right: 0; text-align: center; font-size: ${s(40)}px; letter-spacing: ${s(10)}px; text-transform: uppercase; color: #e0b45a; font-weight: 700; text-shadow: 0 2px 8px rgba(0,0,0,0.95), 0 0 24px rgba(0,0,0,0.6); opacity: 0; animation: fadeUp 0.7s ease-out 0.2s forwards; }
+  .kicker { font-size: ${s(30)}px; letter-spacing: ${s(8)}px; text-transform: uppercase; color: #e0b45a; font-weight: 700; margin-bottom: ${s(30)}px; text-shadow: 0 2px 8px rgba(0,0,0,0.95), 0 0 24px rgba(0,0,0,0.6); opacity: 0; animation: fadeUp 0.7s ease-out 0.3s forwards; }
+  h1 { font-size: ${s(96)}px; color: #ffffff; font-weight: 700; line-height: 1.1; margin-bottom: ${s(24)}px; text-shadow: 0 2px 6px rgba(0,0,0,0.95), 0 4px 22px rgba(0,0,0,0.75), 0 0 40px rgba(0,0,0,0.45); opacity: 0; animation: fadeUp 0.8s ease-out 0.8s forwards; }
+  .sub { font-size: ${s(34)}px; color: #dce5ef; text-shadow: 0 2px 6px rgba(0,0,0,0.95), 0 3px 16px rgba(0,0,0,0.75); opacity: 0; animation: fadeUp 0.8s ease-out 1.4s forwards; }
   @keyframes fadeUp { from { opacity: 0; transform: translateY(${s(30)}px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 </head>
 <body>
+  <div class="bg"><img src="${esc(imgName)}" /></div>
+  <div class="veil"></div>
   <div class="halo"></div>
   <div class="brand">Teologia Pra Todos</div>
   <div class="inner">
@@ -163,7 +171,8 @@ function gerarFrameIntro(roteiro) {
 </html>`;
 }
 
-function gerarFrameOutro() {
+function gerarFrameOutro(imagePath) {
+  const imgName = basename(imagePath);
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -172,15 +181,22 @@ function gerarFrameOutro() {
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { width: ${WIDTH}px; height: ${HEIGHT}px; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; position: relative; background: #0d1b2a; display: flex; align-items: center; justify-content: center; }
-  .card { text-align: center; padding: 0 ${s(40)}px; }
-  .kicker { font-size: ${s(30)}px; letter-spacing: ${s(8)}px; text-transform: uppercase; color: #e0b45a; font-weight: 700; margin-bottom: ${s(30)}px; opacity: 0; animation: fadeUp 0.7s ease-out 0.3s forwards; }
-  h1 { font-size: ${s(88)}px; color: #ffffff; font-weight: 700; margin-bottom: ${s(20)}px; opacity: 0; animation: fadeUp 0.8s ease-out 0.8s forwards; }
-  .thanks { font-size: ${s(32)}px; color: #c9d4e0; opacity: 0; animation: fadeUp 0.8s ease-out 1.4s forwards; }
-  .brand { font-size: ${s(40)}px; letter-spacing: ${s(10)}px; text-transform: uppercase; color: #e0b45a; font-weight: 700; margin-top: ${s(48)}px; opacity: 0; animation: fadeUp 0.8s ease-out 1.8s forwards; }
+  .bg { position: absolute; inset: 0; }
+  .bg img { width: 100%; height: 100%; object-fit: cover; }
+  .veil { position: absolute; inset: 0; background:
+    radial-gradient(ellipse 75% 65% at 50% 50%, rgba(13,27,42,0.84) 0%, rgba(13,27,42,0.5) 55%, rgba(13,27,42,0) 78%),
+    linear-gradient(180deg, rgba(13,27,42,0.58) 0%, rgba(13,27,42,0.82) 100%); }
+  .card { position: relative; text-align: center; padding: 0 ${s(40)}px; }
+  .kicker { font-size: ${s(30)}px; letter-spacing: ${s(8)}px; text-transform: uppercase; color: #e0b45a; font-weight: 700; margin-bottom: ${s(30)}px; text-shadow: 0 2px 8px rgba(0,0,0,0.95), 0 0 24px rgba(0,0,0,0.6); opacity: 0; animation: fadeUp 0.7s ease-out 0.3s forwards; }
+  h1 { font-size: ${s(88)}px; color: #ffffff; font-weight: 700; margin-bottom: ${s(20)}px; text-shadow: 0 2px 6px rgba(0,0,0,0.95), 0 4px 22px rgba(0,0,0,0.75), 0 0 40px rgba(0,0,0,0.45); opacity: 0; animation: fadeUp 0.8s ease-out 0.8s forwards; }
+  .thanks { font-size: ${s(32)}px; color: #dce5ef; text-shadow: 0 2px 6px rgba(0,0,0,0.95), 0 3px 16px rgba(0,0,0,0.75); opacity: 0; animation: fadeUp 0.8s ease-out 1.4s forwards; }
+  .brand { font-size: ${s(40)}px; letter-spacing: ${s(10)}px; text-transform: uppercase; color: #e0b45a; font-weight: 700; margin-top: ${s(48)}px; text-shadow: 0 2px 8px rgba(0,0,0,0.95), 0 0 24px rgba(0,0,0,0.6); opacity: 0; animation: fadeUp 0.8s ease-out 1.8s forwards; }
   @keyframes fadeUp { from { opacity: 0; transform: translateY(${s(30)}px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 </head>
 <body>
+  <div class="bg"><img src="${esc(imgName)}" /></div>
+  <div class="veil"></div>
   <div class="card">
     <div class="kicker">Conclusão</div>
     <h1>Obrigado por estudar</h1>
@@ -266,15 +282,22 @@ async function main() {
 
   // 5. Escrever frames HTML
   const total = roteiro.slides.length + 2;
-  await orchestrator.writeFrameHtml(project.id, 'intro', gerarFrameIntro(roteiro));
+  const projectDir = await projects.ensureDir(project.id);
+  const framesDir = join(projectDir, 'frames');
+  const padFrame = (n) => `slide-${String(n).padStart(2, '0')}.png`;
+
+  const capaIntro = join(outDir, padFrame(0));
+  if (!existsSync(capaIntro)) throw new Error(`Imagem da introdução não encontrada: ${capaIntro}`);
+  const capaIntroDest = join(framesDir, padFrame(0));
+  await copyFile(capaIntro, capaIntroDest);
+  await orchestrator.writeFrameHtml(project.id, 'intro', gerarFrameIntro(roteiro, capaIntroDest));
   for (let i = 0; i < roteiro.slides.length; i++) {
     const slide = roteiro.slides[i];
-    const imgPath = join(outDir, `slide-${String(i + 1).padStart(2, '0')}.png`);
+    const imgPath = join(outDir, padFrame(i + 1));
     if (!existsSync(imgPath)) throw new Error(`Imagem do slide não encontrada: ${imgPath}`);
     // Copiar imagem para o diretório do frame para referência relativa funcionar
     // (writeFrameHtml grava em <projectDir>/frames/, mesma pasta do HTML)
-    const projectDir = await projects.ensureDir(project.id);
-    const imgDest = join(projectDir, 'frames', `slide-${String(i + 1).padStart(2, '0')}.png`);
+    const imgDest = join(framesDir, padFrame(i + 1));
     await copyFile(imgPath, imgDest);
     await orchestrator.writeFrameHtml(
       project.id,
@@ -282,7 +305,11 @@ async function main() {
       gerarFrameHtml(slide, imgDest, i + 1, roteiro.slides.length, roteiro.titulo_aula),
     );
   }
-  await orchestrator.writeFrameHtml(project.id, 'conclusao', gerarFrameOutro());
+  const capaConcl = join(outDir, padFrame(roteiro.slides.length + 1));
+  if (!existsSync(capaConcl)) throw new Error(`Imagem da conclusão não encontrada: ${capaConcl}`);
+  const capaConclDest = join(framesDir, padFrame(roteiro.slides.length + 1));
+  await copyFile(capaConcl, capaConclDest);
+  await orchestrator.writeFrameHtml(project.id, 'conclusao', gerarFrameOutro(capaConclDest));
 
   // 6. Narração como soundtrack do projeto
   const proj = await orchestrator.addFileAsset(project.id, narracaoFull, 'Narração completa');

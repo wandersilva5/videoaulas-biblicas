@@ -30,6 +30,11 @@
           <input id="input-topico" type="text" placeholder='Ex.: "A doutrina da Trindade"' />
           <button class="btn btn-primario" id="btn-nova-aula">Criar nova aula</button>
         </div>
+        <div class="nova-aula nova-aula-pdf">
+          <input id="input-pdf" type="file" accept="application/pdf,.pdf" />
+          <input id="input-topico-pdf" type="text" placeholder="Título da aula (opcional — se vazio, usa o nome do arquivo)" />
+          <button class="btn btn-primario" id="btn-nova-aula-pdf">📄 Importar PDF e criar aula</button>
+        </div>
         <div id="lista-aulas" class="grid-aulas"></div>
       </div>
     </section>
@@ -81,10 +86,10 @@
       <label>LLAMA_URL <input data-cfg="LLAMA_URL" type="text" /></label>
       <label>COMFY_URL <input data-cfg="COMFY_URL" type="text" /></label>
       <label>COMFY_OUTPUT_DIR <input data-cfg="COMFY_OUTPUT_DIR" type="text" /></label>
-      <label>ZIMAGE_UNET <input data-cfg="ZIMAGE_UNET" type="text" /></label>
-      <label>ZIMAGE_CLIP <input data-cfg="ZIMAGE_CLIP" type="text" /></label>
-      <label>ZIMAGE_VAE <input data-cfg="ZIMAGE_VAE" type="text" /></label>
-      <label>ZIMAGE_LORA <input data-cfg="ZIMAGE_LORA" type="text" /></label>
+      <label>ANIMA_UNET <input data-cfg="ANIMA_UNET" type="text" /></label>
+      <label>ANIMA_CLIP <input data-cfg="ANIMA_CLIP" type="text" /></label>
+      <label>ANIMA_VAE <input data-cfg="ANIMA_VAE" type="text" /></label>
+      <label>ANIMA_LORA <input data-cfg="ANIMA_LORA" type="text" /></label>
       <label>TTS (qwen = clone de voz local, edge-tts = fallback) <select data-cfg="TTS">
         <option value="qwen">qwen</option>
         <option value="edge-tts">edge-tts</option>

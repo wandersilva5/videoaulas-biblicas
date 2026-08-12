@@ -1,0 +1,955 @@
+/**
+ * pdf_texto.mjs — Extrator de texto de PDF usando apenas Node (zlib embutido).
+ *
+ * Zero dependências externas. Lê streams de conteúdo das páginas (operadores
+ * Tj/TJ/T'/T") e aplica os mapas /ToUnicode das fontes para obter Unicode
+ * correto (cobre fontes embutidas com CMap). Suporta:
+ *  - xref clássico, xref stream (PDF 1.5+) e object streams (compressed)
+ *  - filtros FlateDecode (zlib), ASCIIHexDecode e ASCII85Decode
+ *  - fallback de varredura quando o xref está ausente/quebrado
+ *
+ * Limitações aceitas: PDFs digitalizados (apenas imagem, sem texto) devolvem
+ * texto vazio; LZWDecode e predictors de imagem não são tratados.
+ *
+ *   node scripts/pdf_texto.mjs <arquivo.pdf>   # imprime JSON {paginas, caracteres, texto}
+ */
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { inflateSync } from 'node:zlib';
+
+// ---------------------------------------------------------------------------
+// Lexer (bytes do PDF)
+// ---------------------------------------------------------------------------
+
+function isBranco(b) {
+  return b === 0 || b === 9 || b === 10 || b === 12 || b === 13 || b === 32;
+}
+
+function isDelim(b) {
+  return (
+    isBranco(b) ||
+    b === 0x28 || // (
+    b === 0x29 || // )
+    b === 0x3c || // <
+    b === 0x3e || // >
+    b === 0x5b || // [
+    b === 0x5d || // ]
+    b === 0x7b || // {
+    b === 0x7d || // }
+    b === 0x2f || // /
+    b === 0x25 // %
+  );
+}
+
+class Cursor {
+  constructor(buf, pos = 0) {
+    this.buf = buf;
+    this.pos = pos;
+  }
+  fim() {
+    return this.pos >= this.buf.length;
+  }
+  peek(o = 0) {
+    return this.pos + o < this.buf.length ? this.buf[this.pos + o] : -1;
+  }
+  avancar(n) {
+    this.pos += n;
+  }
+  pularBrancosEComentarios() {
+    while (!this.fim()) {
+      const b = this.peek();
+      if (isBranco(b)) this.avancar(1);
+      else if (b === 0x25) {
+        while (!this.fim() && this.peek() !== 0x0a && this.peek() !== 0x0d) this.avancar(1);
+      } else break;
+    }
+  }
+  lerNumero() {
+    this.pularBrancosEComentarios();
+    const rest = this.buf.toString('latin1', this.pos, Math.min(this.pos + 80, this.buf.length));
+    const m = /^[+\-]?(?:\d+(?:\.\d*)?|\.\d+)/.exec(rest);
+    if (!m) return NaN;
+    this.avancar(m[0].length);
+    return Number(m[0]);
+  }
+  lerPalavraLetras() {
+    this.pularBrancosEComentarios();
+    const ini = this.pos;
+    while (!this.fim()) {
+      const b = this.peek();
+      if ((b >= 0x41 && b <= 0x5a) || (b >= 0x61 && b <= 0x7a)) this.avancar(1);
+      else break;
+    }
+    return this.buf.toString('latin1', ini, this.pos);
+  }
+}
+
+function lerStringLiteral(cur) {
+  cur.avancar(1); // '('
+  const bytes = [];
+  let depth = 1;
+  const especiais = { n: 10, r: 13, t: 9, b: 8, f: 12, '(': 40, ')': 41, '\\': 92 };
+  while (!cur.fim()) {
+    const b = cur.peek();
+    cur.avancar(1);
+    if (b === 0x5c) {
+      const nb = cur.peek();
+      if (nb === 0x0d || nb === 0x0a) {
+        cur.avancar(1);
+        if (cur.peek() === 0x0a || cur.peek() === 0x0d) cur.avancar(1);
+        continue;
+      }
+      const ch = String.fromCharCode(nb);
+      if (ch in especiais) {
+        bytes.push(especiais[ch]);
+        cur.avancar(1);
+      } else if (nb >= 0x30 && nb <= 0x37) {
+        let oct = '';
+        for (let k = 0; k < 3; k++) {
+          const x = cur.peek();
+          if (x >= 0x30 && x <= 0x37) {
+            oct += String.fromCharCode(x);
+            cur.avancar(1);
+          } else break;
+        }
+        bytes.push(parseInt(oct, 8) & 0xff);
+      } else if (nb !== -1) {
+        cur.avancar(1);
+      }
+      continue;
+    }
+    if (b === 0x28) depth++;
+    else if (b === 0x29) {
+      depth--;
+      if (depth === 0) break;
+    }
+    bytes.push(b);
+  }
+  return { t: 'str', bytes: Buffer.from(bytes) };
+}
+
+/** Próximo token PDF (strings lidas como bytes; dicionários/arrays viram delimitadores). */
+function proxToken(cur) {
+  cur.pularBrancosEComentarios();
+  if (cur.fim()) return { t: 'eof' };
+  const b = cur.peek();
+  if (b === 0x3c) {
+    if (cur.peek(1) === 0x3c) {
+      cur.avancar(2);
+      return { t: '<<' };
+    }
+    cur.avancar(1);
+    let h = '';
+    while (!cur.fim() && cur.peek() !== 0x3e) {
+      h += String.fromCharCode(cur.peek());
+      cur.avancar(1);
+    }
+    cur.avancar(1);
+    return { t: 'hex', hex: h };
+  }
+  if (b === 0x3e) {
+    cur.avancar(1);
+    if (cur.peek() === 0x3e) {
+      cur.avancar(1);
+      return { t: '>>' };
+    }
+    cur.avancar(1);
+    return { t: '>' };
+  }
+  if (b === 0x28) return lerStringLiteral(cur);
+  if (b === 0x5b) {
+    cur.avancar(1);
+    return { t: '[' };
+  }
+  if (b === 0x5d) {
+    cur.avancar(1);
+    return { t: ']' };
+  }
+  if (b === 0x2f) {
+    cur.avancar(1);
+    const ini = cur.pos;
+    while (!cur.fim() && !isDelim(cur.peek())) cur.avancar(1);
+    return { t: 'nome', nome: cur.buf.toString('latin1', ini, cur.pos) };
+  }
+  if (b === 0x2b || b === 0x2d || b === 0x2e || (b >= 0x30 && b <= 0x39)) {
+    return { t: 'num', v: cur.lerNumero() };
+  }
+  if ((b >= 0x41 && b <= 0x5a) || (b >= 0x61 && b <= 0x7a)) {
+    const ini = cur.pos;
+    while (!cur.fim() && !isDelim(cur.peek())) cur.avancar(1);
+    return { t: 'palavra', s: cur.buf.toString('latin1', ini, cur.pos) };
+  }
+  cur.avancar(1);
+  return { t: 'desconhecido' };
+}
+
+/** Converte um token já lido (que não é `<<`/`[`) em valor estruturado. */
+function valorDeToken(cur, tok) {
+  if (tok.t === 'num') {
+    const p1 = cur.pos;
+    const t2 = proxToken(cur);
+    if (t2.t === 'num' && Number.isInteger(t2.v)) {
+      const p2 = cur.pos;
+      const t3 = proxToken(cur);
+      if (t3.t === 'palavra' && t3.s === 'R') return { t: 'ref', num: tok.v, gen: t2.v };
+      cur.pos = p2;
+      return { t: 'num', v: Number(tok.v) };
+    }
+    cur.pos = p1;
+    return { t: 'num', v: Number(tok.v) };
+  }
+  if (tok.t === 'str') return { t: 'str', bytes: tok.bytes };
+  if (tok.t === 'hex') return { t: 'str', bytes: Buffer.from(tok.hex.replace(/\s+/g, ''), 'hex') };
+  if (tok.t === 'nome') return { t: 'nome', nome: tok.nome };
+  return { t: 'null' };
+}
+
+/** Lê um valor completo (dicionário, array ou escalar) a partir do cursor. */
+function lerValor(cur) {
+  const tok = proxToken(cur);
+  if (tok.t === '<<') {
+    const itens = new Map();
+    for (;;) {
+      const k = proxToken(cur);
+      if (k.t === '>>' || k.t === 'eof') break;
+      if (k.t !== 'nome') continue;
+      itens.set(k.nome, lerValor(cur));
+    }
+    return { t: 'dict', itens };
+  }
+  if (tok.t === '[') {
+    const itens = [];
+    for (;;) {
+      const st = proxToken(cur);
+      if (st.t === ']' || st.t === 'eof') break;
+      itens.push(valorDeToken(cur, st));
+    }
+    return { t: 'array', itens };
+  }
+  return valorDeToken(cur, tok);
+}
+
+// ---------------------------------------------------------------------------
+// Mapa de objetos (xref) e fallback
+// ---------------------------------------------------------------------------
+
+function acharXrefOffset(buf) {
+  const alvo = 'startxref';
+  for (let i = buf.length - alvo.length; i >= 0; i--) {
+    if (buf[i] === 0x73 && buf.toString('latin1', i, i + alvo.length) === alvo) {
+      const cur = new Cursor(buf, i + alvo.length);
+      const off = cur.lerNumero();
+      return Number.isInteger(off) && off > 0 ? off : null;
+    }
+  }
+  return null;
+}
+
+/** Varredura bruta de "N 0 obj" — a última ocorrência vence (appends incrementais). */
+function escanearObjetos(buf) {
+  const mapa = new Map();
+  const s = buf.toString('latin1');
+  const re = /(\d{1,10})\s+0\s+obj/g;
+  let m;
+  while ((m = re.exec(s))) {
+    const num = Number(m[1]);
+    if (num > 0 && num < 10000000) mapa.set(num, m.index);
+  }
+  return mapa;
+}
+
+/**
+ * Lê uma xref (clássica ou stream, com encadeamento /Prev) e alimenta:
+ *  - `mapaOffsets` com entradas do tipo 1
+ *  - `mapaObjetosStream` com entradas do tipo 2 (objeto em "object stream")
+ */
+function aplicarXref(buf, offset, mapaOffsets) {
+  const mapaObjetosStream = new Map();
+  const visitados = new Set();
+
+  function lerXrefStream(off) {
+    const cur = new Cursor(buf, off);
+    cur.pularBrancosEComentarios();
+    cur.lerNumero();
+    cur.lerNumero();
+    if (cur.lerPalavraLetras() !== 'obj') return null;
+    const dictIni = buf.indexOf(Buffer.from('<<'), cur.pos);
+    if (dictIni === -1) return null;
+    const dictFim = buf.indexOf(Buffer.from('>>'), dictIni + 2);
+    if (dictFim === -1) return null;
+    const dcur = new Cursor(buf, dictIni);
+    const dict = lerValor(dcur);
+    const sIdx = buf.indexOf(Buffer.from('stream'), dictFim + 2);
+    if (sIdx === -1) return null;
+    let dataStart = sIdx + 6;
+    if (buf[dataStart] === 0x0d) dataStart++;
+    if (buf[dataStart] === 0x0a) dataStart++;
+    const eIdx = buf.indexOf(Buffer.from('endstream'), dataStart);
+    if (eIdx === -1) return null;
+    const dados = aplicarFiltros(buf.slice(dataStart, eIdx), dict?.itens?.get('Filter'));
+    const numerosDe = (v, padrao) => {
+      if (v?.t === 'num') return [v.v];
+      if (v?.t === 'array') {
+        const a = v.itens.map((x) => (x.t === 'num' ? x.v : null)).filter((x) => x != null);
+        return a.length ? a : padrao;
+      }
+      return padrao;
+    };
+    const W = numerosDe(dict?.itens?.get('W'), [1, 4, 2]);
+    const Index = numerosDe(dict?.itens?.get('Index'), null);
+    const [w1 = 1, w2 = 4, w3 = 2] = W;
+    const lado = w1 + w2 + w3;
+    const faixas = Index ? Index : [0, 1];
+    const entradas = [];
+    for (let g = 0; g + 1 < faixas.length; g += 2) {
+      const start = faixas[g];
+      const cnt = faixas[g + 1];
+      for (let r = 0; r < cnt; r++) {
+        const base = r * lado;
+        if (base + lado > dados.length) break;
+        const tipo = w1 > 0 ? dados.readUIntBE(base, w1) : 1;
+        const numero = w2 > 0 ? dados.readUIntBE(base + w1, w2) : 0;
+        const gen = w3 > 0 ? dados.readUIntBE(base + w1 + w2, w3) : 0;
+        entradas.push({ num: start + r, tipo, off: numero, gen });
+      }
+    }
+    return { entradas, prev: dict?.itens?.get('Prev')?.v ?? null };
+  }
+
+  function visita(o, prof) {
+    if (prof > 12 || visitados.has(o)) return;
+    visitados.add(o);
+    if (!Number.isInteger(o) || o <= 0 || o >= buf.length) return;
+    const cur = new Cursor(buf, o);
+    cur.pularBrancosEComentarios();
+    if (buf.toString('latin1', cur.pos, Math.min(cur.pos + 4, buf.length)) === 'xref') {
+      cur.pos += 4;
+      for (;;) {
+        const a = cur.lerNumero();
+        const b = cur.lerNumero();
+        if (!Number.isInteger(a) || !Number.isInteger(b)) break;
+        for (let i = 0; i < b; i++) {
+          cur.pularBrancosEComentarios();
+          const offs = cur.lerNumero();
+          cur.lerNumero();
+          cur.pularBrancosEComentarios();
+          const sub = cur.peek();
+          cur.avancar(1);
+          if (sub === 0x6e && Number.isInteger(offs) && offs > 0) mapaOffsets.set(a + i, offs);
+        }
+      }
+      const resto = buf.toString('latin1', cur.pos, Math.min(cur.pos + 500, buf.length));
+      const pm = /\/Prev\s+(\d+)/.exec(resto);
+      if (pm) visita(Number(pm[1]), prof + 1);
+    } else {
+      const xs = lerXrefStream(o);
+      if (!xs) return;
+      for (const e of xs.entradas) {
+        if (e.tipo === 1 && e.off > 0) mapaOffsets.set(e.num, e.off);
+        else if (e.tipo === 2) mapaObjetosStream.set(e.num, { S: e.off, idx: e.gen });
+      }
+      if (xs.prev) visita(xs.prev, prof + 1);
+    }
+  }
+
+  visita(offset, 0);
+  return mapaObjetosStream;
+}
+
+// ---------------------------------------------------------------------------
+// Filtros de stream
+// ---------------------------------------------------------------------------
+
+function decodificarHex(data) {
+  let h = data.toString('latin1').replace(/\s/g, '');
+  const fim = h.indexOf('>');
+  if (fim !== -1) h = h.slice(0, fim);
+  if (h.length % 2) h += '0';
+  return Buffer.from(h, 'hex');
+}
+
+function decodificar85(data) {
+  const s = data.toString('latin1').replace(/\s/g, '').replace(/~>.*$/, '');
+  const groups = s.split('z');
+  const saida = [];
+  for (let g = 0; g < groups.length; g++) {
+    const chunk = groups[g].padEnd(5, 'u');
+    let v = 0;
+    for (let i = 0; i < 5; i++) v = v * 85 + (chunk.charCodeAt(i) - 33);
+    const bytes = [(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff];
+    const tam = g === groups.length - 1 ? groups[g].length - 1 : 4;
+    for (let i = 0; i < Math.max(0, tam); i++) saida.push(bytes[i]);
+  }
+  return Buffer.from(saida);
+}
+
+/** Aplica os filtros de uma stream (nomes inline; sem resolução de refs aqui). */
+function aplicarFiltros(data, filtroValor) {
+  let d = data;
+  const lista = [];
+  if (filtroValor?.t === 'nome') lista.push(filtroValor.nome);
+  else if (filtroValor?.t === 'array') {
+    for (const f of filtroValor.itens ?? []) if (f.t === 'nome') lista.push(f.nome);
+  }
+  for (const f of lista) {
+    if (f === 'FlateDecode' || f === 'Fl') {
+      try {
+        d = inflateSync(d);
+      } catch {
+        return null;
+      }
+    } else if (f === 'ASCIIHexDecode' || f === 'AHx') {
+      d = decodificarHex(d);
+    } else if (f === 'ASCII85Decode' || f === 'A85') {
+      d = decodificar85(d);
+    } else {
+      return d;
+    }
+  }
+  return d;
+}
+
+// ---------------------------------------------------------------------------
+// Parse de objetos por número
+// ---------------------------------------------------------------------------
+
+function criarResolvedor(buf, mapaOffsets, mapaObjetosStream) {
+  const cache = new Map();
+  const objsStreams = new Map();
+
+  function parsearDireto(off) {
+    if (!Number.isInteger(off) || off < 0 || off >= buf.length) return null;
+    const cur = new Cursor(buf, off);
+    cur.pularBrancosEComentarios();
+    cur.lerNumero();
+    cur.lerNumero();
+    if (cur.lerPalavraLetras() !== 'obj') return null;
+    const valor = lerValor(cur);
+    let stream = null;
+    const palavra = cur.lerPalavraLetras();
+    if (palavra === 'stream') {
+      if (cur.peek() === 0x0d) cur.avancar(1);
+      if (cur.peek() === 0x0a) cur.avancar(1);
+      let len = null;
+      const L = valor.itens?.get('Length');
+      if (L?.t === 'num') len = L.v;
+      else if (L?.t === 'ref') len = resolverInteiro(L.num);
+      let data = null;
+      if (len != null && len >= 0 && cur.pos + len <= buf.length) {
+        data = buf.slice(cur.pos, cur.pos + len);
+      } else {
+        const eIdx = buf.indexOf(Buffer.from('endstream'), cur.pos);
+        data = eIdx === -1 ? buf.slice(cur.pos) : buf.slice(cur.pos, eIdx);
+      }
+      const eIdx2 = buf.indexOf(Buffer.from('endstream'), cur.pos);
+      if (eIdx2 !== -1) cur.pos = eIdx2 + 9;
+      stream = aplicarFiltros(data, valor.itens?.get('Filter'));
+    }
+    return { valor: valor ?? { t: 'null' }, stream };
+  }
+
+  function parsearCompilado(comp) {
+    let bufStream = objsStreams.get(comp.S);
+    if (bufStream === undefined) {
+      const sObj = parsearObjeto(comp.S);
+      bufStream = sObj?.stream ?? null;
+      objsStreams.set(comp.S, bufStream);
+    }
+    if (!bufStream) return null;
+    const texto = bufStream.toString('latin1');
+    const tokens = [];
+    const reN = /-?\d+/g;
+    let m;
+    while ((m = reN.exec(texto))) tokens.push({ n: Number(m[0]), fim: m.index + m[0].length });
+    if (tokens.length < 3) return null;
+    const qtd = tokens[0].n;
+    const pares = [];
+    for (let k = 1; k + 1 < tokens.length && pares.length < qtd; k += 2) {
+      pares.push([tokens[k].n, tokens[k + 1].n]);
+    }
+    if (!pares.length) return null;
+    // Início dos dados: logo após o último número do cabeçalho.
+    let iniDados = tokens[Math.min(1 + qtd * 2 - 1, tokens.length - 1)].fim;
+    while (iniDados < bufStream.length) {
+      const b = bufStream[iniDados];
+      if (b === 0x3e) break; // segurança: nunca atravessar '>' (hex/dict)
+      if (!isBranco(b)) break;
+      iniDados++;
+    }
+    const par = pares.find(([n]) => n === comp.idx);
+    if (!par) return null;
+    const ini = iniDados + par[1];
+    let prox = Infinity;
+    for (const [, off] of pares) if (off > par[1]) prox = Math.min(prox, off);
+    const fim = prox === Infinity ? bufStream.length : iniDados + prox;
+    const sub = bufStream.subarray(ini, fim);
+    const cur = new Cursor(sub, 0);
+    try {
+      return { valor: lerValor(cur) };
+    } catch {
+      return null;
+    }
+  }
+
+  function parsearObjeto(num) {
+    if (cache.has(num)) return cache.get(num);
+    let obj = null;
+    const off = mapaOffsets.get(num);
+    if (off != null) {
+      try {
+        obj = parsearDireto(off);
+      } catch {
+        obj = null;
+      }
+    }
+    if (!obj) {
+      const comp = mapaObjetosStream?.get(num);
+      if (comp) {
+        try {
+          obj = parsearCompilado(comp);
+        } catch {
+          obj = null;
+        }
+      }
+    }
+    cache.set(num, obj);
+    return obj;
+  }
+
+  function resolverInteiro(num) {
+    const o = parsearObjeto(num);
+    return o?.valor?.t === 'num' ? o.valor.v : null;
+  }
+
+  /** Resolve um valor (se for ref, lê o objeto e devolve acessível). */
+  function resolver(p, prof = 0) {
+    if (!p) return null;
+    if (p.t === 'ref') {
+      if (prof > 12) return null;
+      const o = parsearObjeto(Math.floor(p.num));
+      if (!o?.valor) return null;
+      if (o.stream) return { t: 'stream', dados: o.stream, itens: o.valor.itens ?? null };
+      return { t: o.valor.t, itens: o.valor.itens, v: o.valor.v ?? null };
+    }
+    if (p.t === 'dict') return { t: 'dict', itens: p.itens };
+    if (p.t === 'array') return { t: 'array', itens: p.itens };
+    if (p.t === 'num') return { t: 'num', v: p.v };
+    return { t: 'null' };
+  }
+
+  return { parsearObjeto, resolver, resolverInteiro };
+}
+
+// ---------------------------------------------------------------------------
+// ToUnicode (CMap)
+// ---------------------------------------------------------------------------
+
+function hexParaUnicode(hex) {
+  const b = Buffer.from(hex.replace(/\s+/g, ''), 'hex');
+  let s = '';
+  for (let i = 0; i + 1 < b.length; i += 2) s += String.fromCharCode((b[i] << 8) | b[i + 1]);
+  return s;
+}
+
+function parsearCMap(texto) {
+  const mapa = new Map();
+  let largura = 1;
+  const marcarLargura = (hex) => {
+    if (hex.length > 2) largura = 2;
+  };
+  let re = /beginbfchar([\s\S]*?)endbfchar/g;
+  let m;
+  while ((m = re.exec(texto))) {
+    let c;
+    const rePares = /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g;
+    while ((c = rePares.exec(m[1]))) {
+      marcarLargura(c[1]);
+      mapa.set(parseInt(c[1], 16), hexParaUnicode(c[2]));
+    }
+  }
+  re = /beginbfrange([\s\S]*?)endbfrange/g;
+  while ((m = re.exec(texto))) {
+    let c;
+    const reLista = /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*\[([^\]\]]+)\]/g;
+    while ((c = reLista.exec(m[1]))) {
+      marcarLargura(c[1]);
+      const ini = parseInt(c[1], 16);
+      const dests = (c[3].match(/<[0-9A-Fa-f]+>/g) || []).map((h) => hexParaUnicode(h));
+      dests.forEach((d, i) => mapa.set(ini + i, d));
+    }
+    const reInc = /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g;
+    while ((c = reInc.exec(m[1]))) {
+      marcarLargura(c[1]);
+      const ini = parseInt(c[1], 16);
+      const fimMapa = parseInt(c[2], 16);
+      const base = hexParaUnicode(c[3]).charCodeAt(0) || 0x20;
+      for (let k = ini; k <= fimMapa && k <= ini + 10000; k++) {
+        mapa.set(k, String.fromCharCode(base + (k - ini)));
+      }
+    }
+  }
+  return { mapa, largura };
+}
+
+// ---------------------------------------------------------------------------
+// Extração do texto do conteúdo (operadores de texto)
+// ---------------------------------------------------------------------------
+
+function foraTexto(bytes, cmap) {
+  if (!bytes || !bytes.length) return '';
+  const mapa = cmap?.mapa;
+  const ehMultiByte = cmap?.largura === 2;
+  let s = '';
+  if (ehMultiByte) {
+    const n = bytes.length - (bytes.length % 2);
+    for (let i = 0; i < n; i += 2) {
+      const c = bytes.readUInt16BE(i);
+      s += mapa.get(c) ?? '�';
+    }
+  } else {
+    for (const b of bytes) {
+      const ch = mapa ? mapa.get(b) : undefined;
+      s += ch !== undefined ? ch : String.fromCharCode(b);
+    }
+  }
+  return s;
+}
+
+function extrairTextoConteudo(conteudo, fontes) {
+  const cur = new Cursor(Buffer.from(conteudo, 'latin1'));
+  const itens = [];
+  for (;;) {
+    const tok = proxToken(cur);
+    if (tok.t === 'eof') break;
+    itens.push(tok);
+  }
+
+  const linhas = [];
+  let linha = '';
+  let fonte = null;
+  let pendente = null;
+  let nums = []; // últimos números lidos (operadores como Td/TD usam 2 números)
+  const flush = () => {
+    const t = linha.trim();
+    if (t) linhas.push(t);
+    linha = '';
+  };
+  const escrever = (item) => {
+    if (!item) return;
+    if (item.t === 'str') {
+      linha += foraTexto(item.bytes, fontes.get(fonte));
+    } else if (item.t === 'hex') {
+      linha += foraTexto(Buffer.from(item.hex.replace(/\s+/g, ''), 'hex'), fontes.get(fonte));
+    } else if (item.t === 'array') {
+      for (const sub of item.itens) {
+        if (sub.t === 'num') {
+          if (sub.v < -120 && !linha.endsWith(' ')) linha += ' ';
+        } else if (sub.t === 'str') {
+          linha += foraTexto(sub.bytes, fontes.get(fonte));
+        } else if (sub.t === 'hex') {
+          linha += foraTexto(Buffer.from(sub.hex.replace(/\s+/g, ''), 'hex'), fontes.get(fonte));
+        }
+      }
+    }
+  };
+
+  for (let i = 0; i < itens.length; i++) {
+    const t = itens[i];
+    if (t.t === 'nome') {
+      let nxt = itens[i + 1];
+      let pulo = 1;
+      if (nxt?.t === 'num' && itens[i + 2]?.t === 'palavra') {
+        nxt = itens[i + 2];
+        pulo = 2;
+      }
+      if (nxt?.t === 'palavra' && nxt.s === 'Tf') {
+        fonte = t.nome;
+        i += pulo;
+        pendente = null;
+      } else if (nxt?.t === 'palavra' && nxt.s === 'Do') {
+        i += pulo;
+      }
+      continue;
+    }
+    if (t.t === 'num') {
+      nums.push(t.v);
+      if (nums.length > 2) nums = nums.slice(-2);
+      pendente = t;
+      continue;
+    }
+    if (t.t === 'palavra') {
+      const op = t.s;
+      if (op === 'BT') {
+        fonte = null;
+        pendente = null;
+        nums = [];
+      } else if (op === 'ET') {
+        flush();
+      } else if (op === 'Tj' || op === 'TJ') {
+        if (pendente) escrever(pendente);
+        pendente = null;
+      } else if (op === "'" || op === '"') {
+        flush();
+        if (pendente) escrever(pendente);
+        flush();
+        pendente = null;
+      } else if (op === 'T*') {
+        flush();
+      } else if (op === 'Td' || op === 'TD') {
+        // `Td dx dy`: dy != 0 = iniciou nova linha; dy == 0 = avanço horizontal
+        // (usado pelo Chromium glifo a glifo — os espaços vêm do ToUnicode).
+        if (nums.length === 2 && nums[1] !== 0) flush();
+        nums = [];
+      } else if (op === 'Tm') {
+        flush();
+        nums = [];
+      } else if (op === 'TL') {
+        nums = [];
+      }
+      continue;
+    }
+    if (t.t === 'str' || t.t === 'hex') {
+      pendente = t;
+      nums = [];
+    } else if (t.t === '[') {
+      const arr = [];
+      let j = i + 1;
+      while (j < itens.length && itens[j].t !== ']') {
+        if (itens[j].t === 'str' || itens[j].t === 'hex' || itens[j].t === 'num') arr.push(itens[j]);
+        j++;
+      }
+      pendente = { t: 'array', itens: arr };
+      i = j;
+      nums = [];
+    }
+  }
+  flush();
+  return linhas.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Árvore de páginas
+// ---------------------------------------------------------------------------
+
+function recursosDe(obj, pai) {
+  const merge = new Map(pai ?? []);
+  if (obj?.itens?.has('Resources')) {
+    const R = obj.itens.get('Resources');
+    if (R?.t === 'dict' && R.itens) {
+      for (const [k, v] of R.itens) merge.set(k, v);
+    }
+  }
+  return merge;
+}
+
+function acharToUnicodeRef(fdict, resolver, prof = 0) {
+  if (!fdict || prof > 6) return null;
+  const tu = fdict.itens.get('ToUnicode');
+  if (tu) return tu;
+  const sub = fdict.itens.get('Subtype');
+  if (sub?.t === 'nome' && sub.nome === 'Type0') {
+    const desc = fdict.itens.get('DescendantFonts');
+    if (desc?.t === 'array' && desc.itens.length) {
+      const d = resolver(desc.itens[0]);
+      if (d?.t === 'dict') return acharToUnicodeRef(d, resolver, prof + 1);
+    }
+  }
+  return null;
+}
+
+export function extrairTextoPDF(caminho) {
+  const buf = readFileSync(caminho);
+  if (buf.length < 8 || buf.toString('latin1', 0, 5) !== '%PDF-') {
+    throw new Error('O arquivo não é um PDF válido (assinatura %PDF ausente).');
+  }
+
+  const mapaOffsets = escanearObjetos(buf);
+  let mapaObjetosStream = new Map();
+  const xrefOff = acharXrefOffset(buf);
+  if (xrefOff) mapaObjetosStream = aplicarXref(buf, xrefOff, mapaOffsets);
+
+  const { resolver } = criarResolvedor(buf, mapaOffsets, mapaObjetosStream);
+
+  // Raiz: última referência /Root no arquivo (trailer mais recente).
+  const textoBruto = buf.toString('latin1');
+  const reRoot = /\/Root\s+(\d+)\s+0\s+R/g;
+  let mR;
+  let rootNum = null;
+  while ((mR = reRoot.exec(textoBruto))) rootNum = Number(mR[1]);
+  if (!rootNum) throw new Error('PDF sem catálogo (/Root) — páginas não localizadas.');
+
+  const root = resolver({ t: 'ref', num: rootNum, gen: 0 });
+  const pages = resolver(root?.itens?.get('Pages'));
+  if (pages?.t !== 'dict') throw new Error('PDF sem árvore de páginas (/Pages).');
+
+  const paginas = [];
+  const caminhar = (obj, recurs, prof) => {
+    if (prof > 50) return;
+    const R = recursosDe(obj, recurs);
+    const kids = resolver(obj.itens.get('Kids'));
+    if (kids?.t === 'array') {
+      for (const k of kids.itens) {
+        const ko = resolver(k);
+        if (ko?.t === 'dict') caminhar(ko, R, prof + 1);
+      }
+      return;
+    }
+    paginas.push({ dict: obj.itens, recursos: R });
+  };
+  caminhar(pages, null, 0);
+
+  if (!paginas.length) throw new Error('Nenhuma página encontrada no PDF.');
+
+  const textosPaginas = paginas.map(({ dict, recursos }) => {
+    const fontes = new Map();
+    const fontRaw = recursos.get('Font');
+    if (fontRaw?.t === 'dict') {
+      for (const [nome, ref] of fontRaw.itens) {
+        const fObj = resolver(ref);
+        if (fObj?.t === 'dict') {
+          const tuRef = acharToUnicodeRef(fObj, resolver);
+          if (tuRef) {
+            const cmapObj = resolver(tuRef);
+            if (cmapObj?.t === 'stream' && cmapObj.dados) {
+              try {
+                const cmap = parsearCMap(cmapObj.dados.toString('latin1'));
+                if (cmap.mapa.size) fontes.set(nome, cmap);
+              } catch {
+                /* CMap ilegível */
+              }
+            }
+          }
+        }
+      }
+    }
+
+    const streams = [];
+    const contVal = dict.get('Contents');
+    if (contVal) {
+      const c = resolver(contVal);
+      if (c?.t === 'stream' && c.dados) streams.push(c.dados);
+      else if (c?.t === 'array') {
+        for (const it of c.itens) {
+          const s = resolver(it);
+          if (s?.t === 'stream' && s.dados) streams.push(s.dados);
+        }
+      }
+    }
+    if (!streams.length) return '';
+    return extrairTextoConteudo(Buffer.concat(streams).toString('latin1'), fontes);
+  });
+
+  const total = textosPaginas.reduce((acc, t) => acc + t.length, 0);
+  return {
+    texto: textosPaginas.join('\n\n').trim(),
+    paginas: textosPaginas.length,
+    caracteres: total,
+  };
+}
+
+async function main() {
+  const caminho = process.argv[2];
+  if (!caminho) {
+    console.error('Uso: node pdf_texto.mjs <arquivo.pdf>');
+    process.exit(1);
+  }
+  if (process.env.PDF_DEBUG) {
+    console.log(JSON.stringify(diagnosticarPDF(caminho), null, 2));
+    return;
+  }
+  const r = extrairTextoPDF(caminho);
+  console.log(
+    JSON.stringify({
+      paginas: r.paginas,
+      caracteres: r.caracteres,
+      texto: r.texto.slice(0, 3000),
+    }),
+  );
+}
+
+export function diagnosticarPDF(caminho) {
+  const buf = readFileSync(caminho);
+  const mapaOffsets = escanearObjetos(buf);
+  let mapaObjetosStream = new Map();
+  const xrefOff = acharXrefOffset(buf);
+  if (xrefOff) mapaObjetosStream = aplicarXref(buf, xrefOff, mapaOffsets);
+  const { resolver, parsearObjeto } = criarResolvedor(buf, mapaOffsets, mapaObjetosStream);
+  const textoBruto = buf.toString('latin1');
+  const reRoot = /\/Root\s+(\d+)\s+0\s+R/g;
+  let mR;
+  let rootNum = null;
+  while ((mR = reRoot.exec(textoBruto))) rootNum = Number(mR[1]);
+  const root = resolver({ t: 'ref', num: rootNum ?? 0, gen: 0 });
+  const pages = resolver(root?.itens?.get('Pages'));
+  const paginaInfo = [];
+  const caminhar = (obj, recurs, prof) => {
+    if (prof > 50) return;
+    const R = recursosDe(obj, recurs);
+    const kids = resolver(obj.itens.get('Kids'));
+    if (kids?.t === 'array') {
+      for (const k of kids.itens) {
+        const ko = resolver(k);
+        if (ko?.t === 'dict') caminhar(ko, R, prof + 1);
+      }
+      return;
+    }
+    const contVal = obj.itens.get('Contents');
+    const c = resolver(contVal);
+    let info = {};
+    if (c?.t === 'stream') info = { tipo: 'stream', bytes: c.dados?.length ?? 0, amostra: c.dados?.subarray(0, 60).toString('latin1'), dump: c.dados?.subarray(0, 2500).toString('latin1') };
+    else if (c?.t === 'array') {
+      info = { tipo: 'array', itens: c.itens.length };
+      const s0 = resolver(c.itens[0]);
+      info['item0'] = s0?.t === 'stream' ? { bytes: s0.dados?.length ?? 0, amostra: s0.dados?.subarray(0, 60).toString('latin1') } : String(s0?.t);
+    } else info = { tipo: c?.t };
+    if (paginaInfo.length === 0 && c?.t === 'stream') {
+      const fontesDbg = new Map();
+      const fontRaw = R.get('Font');
+      info['fontRaw'] = fontRaw?.t ?? 'ausente';
+      const F = resolver(fontRaw);
+      if (F?.t === 'dict') {
+        info['nFontes'] = F.itens.size;
+        for (const [nome, ref] of F.itens) {
+          const fObj = resolver(ref);
+          const sub = fObj?.itens?.get('Subtype')?.nome ?? '?';
+          const tuRef = acharToUnicodeRef(fObj, resolver);
+          let tuSize = 0;
+          if (tuRef) {
+            const cmapObj = resolver(tuRef);
+            if (cmapObj?.t === 'stream' && cmapObj.dados) {
+              try {
+                tuSize = parsearCMap(cmapObj.dados.toString('latin1')).mapa.size;
+              } catch {
+                tuSize = -1;
+              }
+            } else tuSize = -2;
+          }
+          info[`fonte_${nome}`] = { subtype: sub, tuRef: !!tuRef, tuSize };
+        }
+      }
+    }
+    paginaInfo.push(info);
+  };
+  if (pages?.t === 'dict') caminhar(pages, null, 0);
+  const amostras = [];
+  for (const o of mapaOffsets.keys()) {
+    if (amostras.length > 5) break;
+    const obj = parsearObjeto(o);
+    if (obj?.stream) {
+      const s = obj.stream;
+      amostras.push({ num: o, bytes: s.length, ini: s.subarray(0, 40).toString('latin1') });
+    }
+  }
+  return { rootNum, xrefOff, objetos: mapaOffsets.size, objetosStream: mapaObjetosStream.size, paginas: paginaInfo, amostrasStreams: amostras };
+}
+
+if (process.argv[1]) {
+  const scriptPath = fileURLToPath(import.meta.url).replace(/\\/g, '/');
+  const argPath = process.argv[1].replace(/\\/g, '/');
+  if (scriptPath === argPath) {
+    main().catch((e) => {
+      console.error('ERRO:', e.message);
+      process.exit(1);
+    });
+  }
+}

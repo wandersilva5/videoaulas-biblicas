@@ -173,7 +173,10 @@ function statusEtapa(n) {
   const st = estado.artefatos;
   if (!st) return 'erro';
   if (n === 1) return 'ok';
-  if (n === 2) return st.imagensCompletas ? 'ok' : st.slides.some((s) => s.imagem.existe) ? 'alerta' : 'erro';
+  if (n === 2) {
+    const temAlguma = [st.intro, ...st.slides, st.conclusao].some((x) => x?.imagem?.existe);
+    return st.imagensCompletas ? 'ok' : temAlguma ? 'alerta' : 'erro';
+  }
   if (n === 3) return st.audioCompleto ? 'ok' : 'alerta';
   if (n === 4) return st.video.existe ? 'ok' : 'erro';
   return st.pdf?.existe ? 'ok' : 'erro';
@@ -408,8 +411,16 @@ function renderEtapa1(el) {
       <textarea data-field="introducao" rows="3">${esc(r.introducao)}</textarea>
     </div>
     <div class="cartao campo-texto">
+      <label>Introdução — prompt da imagem de capa (EN)</label>
+      <textarea data-field="introducao_imagem_prompt" rows="2">${esc(r.introducao_imagem_prompt || '')}</textarea>
+    </div>
+    <div class="cartao campo-texto">
       <label>Conclusão (narrada)</label>
       <textarea data-field="conclusao" rows="3">${esc(r.conclusao)}</textarea>
+    </div>
+    <div class="cartao campo-texto">
+      <label>Conclusão — prompt da imagem de capa (EN)</label>
+      <textarea data-field="conclusao_imagem_prompt" rows="2">${esc(r.conclusao_imagem_prompt || '')}</textarea>
     </div>
     <div class="etapa-topo" style="margin-bottom:10px">
       <h3 style="font-size:16px">Slides</h3>
@@ -447,7 +458,9 @@ function lerRoteiroDoDOM() {
   const r = estado.roteiro;
   r.titulo_aula = $('[data-field="titulo_aula"]')?.value ?? r.titulo_aula;
   r.introducao = $('[data-field="introducao"]')?.value ?? r.introducao;
+  r.introducao_imagem_prompt = $('[data-field="introducao_imagem_prompt"]')?.value ?? r.introducao_imagem_prompt;
   r.conclusao = $('[data-field="conclusao"]')?.value ?? r.conclusao;
+  r.conclusao_imagem_prompt = $('[data-field="conclusao_imagem_prompt"]')?.value ?? r.conclusao_imagem_prompt;
   r.slides.forEach((s, i) => {
     s.titulo = $(`[data-slide="${i}"][data-field="titulo"]`)?.value ?? s.titulo;
     s.narracao = $(`[data-slide="${i}"][data-field="narracao"]`)?.value ?? s.narracao;
@@ -476,12 +489,24 @@ function atualizarContadores() {
 // ---------------------------------------------------------------------------
 // Etapa 2 — Imagens
 // ---------------------------------------------------------------------------
-function renderEtapa2(el) {
+function itensImagem() {
   const st = estado.artefatos;
-  const cards = st.slides
-    .map((s) => {
+  if (!st) return [];
+  const pad = (n) => String(n).padStart(2, '0');
+  const imgDe = (x) => ({ existe: !!x?.existe, mtime: x?.mtime ?? null, desatualizado: !!x?.desatualizado });
+  return [
+    { id: 'intro', titulo: 'Introdução', arquivo: 'slide-00.png', imagem: imgDe(st.intro?.imagem) },
+    ...st.slides.map((s) => ({ id: s.id, titulo: s.titulo, arquivo: `slide-${pad(s.idx)}.png`, imagem: imgDe(s.imagem) })),
+    { id: 'conclusao', titulo: 'Conclusão', arquivo: `slide-${pad(st.slides.length + 1)}.png`, imagem: imgDe(st.conclusao?.imagem) },
+  ];
+}
+
+function renderEtapa2(el) {
+  const itens = itensImagem();
+  const cards = itens
+    .map((s, i) => {
       const img = s.imagem.existe
-        ? `<img src="/media/${estado.slug}/slide-${String(s.idx).padStart(2, '0')}.png" loading="lazy" />`
+        ? `<img src="/media/${estado.slug}/${s.arquivo}" loading="lazy" />`
         : '';
       const regen = s.imagem.existe
         ? `<button class="regen" data-action="regen-imagem" data-slide="${s.id}" title="Regenerar imagem (novo seed)">↻</button>`
@@ -489,20 +514,20 @@ function renderEtapa2(el) {
       const badge = s.imagem.existe
         ? (s.imagem.desatualizado ? '<span class="badge alerta">prompt alterado</span>' : '<span class="badge ok">ok</span>')
         : '<span class="badge erro">pendente</span>';
-      return `<div class="img-card ${s.imagem.existe ? '' : 'faltando'}" data-idx="${s.idx}">${img}${regen}
+      return `<div class="img-card ${s.imagem.existe ? '' : 'faltando'}" data-idx="${i}">${img}${regen}
         <div class="img-info"><span>${esc(s.titulo)}</span>${badge}</div></div>`;
     })
     .join('');
 
   el.innerHTML = `
     <div class="etapa-topo">
-      <h3>Imagens dos slides</h3>
+      <h3>Imagens</h3>
       <div class="etapa-acoes">
-        <button class="btn btn-perigo" data-action="gerar-todas-imagens-recriar" title="Apaga as atuais e gera todas de novo">↺ Recriar todas</button>
+        <button class="btn btn-perigo" data-action="gerar-todas-imagens-recriar" title="Apaga as atuais e gera todas de novo (capas + slides)">↺ Recriar todas</button>
         <button class="btn btn-primario" data-action="gerar-todas-imagens">Gerar as que faltam</button>
       </div>
     </div>
-    <p class="msg-progresso">Geração via ComfyUI local (≈30s por imagem). "↻" regenera uma imagem com seed aleatório.</p>
+    <p class="msg-progresso">Capas de abertura/encerramento + slides. Geração via ComfyUI local (≈30s por imagem). "↻" regenera uma imagem com seed aleatório.</p>
     <div class="grid-imagens">${cards}</div>`;
 }
 
@@ -647,13 +672,13 @@ function renderEtapa5(el) {
 // Modal fullscreen de slides
 // ---------------------------------------------------------------------------
 function abrirModalSlide(i) {
-  const slides = estado.artefatos?.slides || [];
-  if (!slides.length) return;
-  estado.modalIndice = ((i % slides.length) + slides.length) % slides.length;
-  const s = slides[estado.modalIndice];
-  $('#modal-slide-img').src = `/media/${estado.slug}/slide-${String(s.idx).padStart(2, '0')}.png`;
+  const itens = itensImagem();
+  if (!itens.length) return;
+  estado.modalIndice = ((i % itens.length) + itens.length) % itens.length;
+  const s = itens[estado.modalIndice];
+  $('#modal-slide-img').src = `/media/${estado.slug}/${s.arquivo}`;
   $('#modal-slide-img').alt = s.titulo || '';
-  $('#modal-slide-contador').textContent = `${s.idx} / ${slides.length}`;
+  $('#modal-slide-contador').textContent = `${estado.modalIndice + 1} / ${itens.length}`;
   $('#modal-slide-titulo').textContent = s.titulo || '';
   $('#modal-slide').hidden = false;
   document.body.style.overflow = 'hidden';
@@ -742,7 +767,7 @@ $('#etapa-container').addEventListener('click', async (ev) => {
   const img = ev.target.closest('.img-card img');
   if (img) {
     const card = img.closest('.img-card');
-    if (card?.dataset.idx) abrirModalSlide(Number(card.dataset.idx) - 1);
+    if (card?.dataset.idx) abrirModalSlide(Number(card.dataset.idx));
     return;
   }
   const btn = ev.target.closest('button[data-action]');
@@ -975,6 +1000,46 @@ $('#btn-nova-aula').onclick = async () => {
 $('#input-topico').addEventListener('keydown', (ev) => {
   if (ev.key === 'Enter') $('#btn-nova-aula').click();
 });
+
+function arquivoParaBase64(arquivo) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result || '').split(',')[1] || '');
+    fr.onerror = () => reject(fr.error || new Error('Falha ao ler o arquivo'));
+    fr.readAsDataURL(arquivo);
+  });
+}
+
+$('#btn-nova-aula-pdf').onclick = async () => {
+  const inp = $('#input-pdf');
+  const arquivo = inp.files && inp.files[0];
+  if (!arquivo) return toast('Selecione um arquivo PDF.', true);
+  if (!/\.pdf$/i.test(arquivo.name)) return toast('O arquivo precisa ter extensão .pdf.', true);
+  let topico = $('#input-topico-pdf').value.trim();
+  if (!topico) {
+    topico = arquivo.name.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ').trim();
+  }
+  if (!topico) return toast('Informe o título da aula ou renomeie o arquivo.', true);
+  const slug = slugDe(topico);
+  try {
+    const aulas = await api('/api/aulas');
+    if (aulas.some((a) => a.slug === slug)) {
+      return toast(`Já existe uma aula com este título ("${slug}").`, true);
+    }
+    if (estado.servicos && !servicoOk('llama')) {
+      toast('llama-server indisponível — o roteiro não será gerado. Inicie-o antes.', true);
+      return;
+    }
+    const base64 = await arquivoParaBase64(arquivo);
+    const res = await api('/api/roteiro', { method: 'POST', body: JSON.stringify({ topico, pdf: { nome: arquivo.name, base64 } }) });
+    inp.value = '';
+    $('#input-topico-pdf').value = '';
+    await abrirAula(res.slug);
+    toast(res.pdf ? `PDF importado (${res.pdf.paginas} páginas) — roteiro gerado a partir do material!` : 'Roteiro gerado!');
+  } catch (e) {
+    toast(e.message, true);
+  }
+};
 
 $('#btn-voltar').onclick = () => mostrarTela('dashboard');
 $('#btn-inicio').onclick = () => mostrarTela('dashboard');

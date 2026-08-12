@@ -1,8 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { request as httpRequest } from 'node:http';
-import { slugDe, modeloLLama } from './util.mjs';
+import { slugDe, modeloLLama, truncarMaterial, MATERIAL_MAX_CHARS } from './util.mjs';
 
 const LLAMA_URL = process.env.LLAMA_URL || 'http://127.0.0.1:8091';
 
@@ -46,6 +47,7 @@ Gere SEMPRE um JSON válido, sem markdown, sem texto extra, com esta estrutura e
 {
   "titulo_aula": "Título da aula",
   "introducao": "2-3 frases de abertura narradas, incluindo pelo menos uma referência bíblica",
+  "introducao_imagem_prompt": "Prompt de imagem em inglês para a capa de abertura (mesmo estilo flat illustration dos slides; idealmente sem texto na imagem)",
   "slides": [
     {
       "id": "slide-01",
@@ -56,7 +58,8 @@ Gere SEMPRE um JSON válido, sem markdown, sem texto extra, com esta estrutura e
       "imagem_prompt": "Prompt de imagem em inglês para gerar ilustração didática deste conceito teológico. Estilo flat illustration, clean educational diagram, cores sóbrias (azul marinho, dourado, creme). Qualquer texto que aparecer na imagem deve estar em português do Brasil (pt-BR). Exemplo: 'flat illustration, open bible with golden light rays, candle and scroll, warm cream and navy palette, educational minimal style, text in Portuguese'"
     }
   ],
-  "conclusao": "3-5 frases de encerramento narradas: comece agradecendo a audiência, feche com uma aplicação prática e outra referência bíblica, e termine convidando a apoiar o projeto — inscrever-se no canal, curtir e compartilhar o vídeo para que mais pessoas sejam abençoadas, e ler a descrição para saber como apoiar de outras formas"
+  "conclusao": "3-5 frases de encerramento narradas: comece agradecendo a audiência, feche com uma aplicação prática e outra referência bíblica, e termine convidando a apoiar o projeto — inscrever-se no canal, curtir e compartilhar o vídeo para que mais pessoas sejam abençoadas, e ler a descrição para saber como apoiar de outras formas",
+  "conclusao_imagem_prompt": "Prompt de imagem em inglês para a capa de encerramento (mesmo estilo flat illustration dos slides; idealmente sem texto na imagem)"
 }
 
 REGRAS:
@@ -70,7 +73,19 @@ REGRAS:
 - Narração legível por leitor de voz (TTS): nos campos de narração (introducao, slides, conclusao) escreva as referências bíblicas por extenso como seriam faladas, ex.: "Primeira Timóteo 3, 1" em vez de "1 Timóteo 3:1", "João 3, 16" em vez de "João 3:16". Já o campo "referencia_biblica" deve continuar no formato padrão (ex.: "1 Timóteo 3:1").
 - imagem_prompt: sempre descrever cena flat illustration educativa. Se houver qualquer texto na imagem, ele deve estar em português do Brasil (pt-BR) e sem erros de ortografia; idealmente minimize texto na imagem.`;
 
-export async function gerarRoteiro(topico) {
+/** Texto do material de apoio (extraído de PDF) embutido no prompt do usuário. */
+function montarContentDoUsuario(topico, material, tentativa, MIN_SLIDES) {
+  const base = `Crie a videoaula sobre: ${topico}`;
+  const materialBlock = material
+    ? `\n\nBASEIE o conteúdo da aula neste material extraído de um PDF de estudo (apostila). Use os conceitos, a estrutura e os exemplos dele para montar os slides, mantendo o tom didático e as regras do prompt de sistema:\n\n--- INÍCIO DO MATERIAL ---\n${material}\n--- FIM DO MATERIAL ---`
+    : '';
+  if (tentativa > 1) {
+    return `${base}${materialBlock}\n\nATENÇÃO: a tentativa anterior foi rejeitada por não passar na validação. É obrigatório gerar no mínimo ${MIN_SLIDES} slides, cada um com id no padrão "slide-NN", narração de 60-90 palavras e campo "imagem_prompt" preenchido.`;
+  }
+  return `${base}${materialBlock}`;
+}
+
+export async function gerarRoteiro(topico, { material } = {}) {
   const MIN_SLIDES = 15;
   const maxTentativas = 3;
   let ultimaRota = null;
@@ -83,10 +98,7 @@ export async function gerarRoteiro(topico) {
         { role: 'system', content: SYSTEM_PROMPT },
         {
           role: 'user',
-          content:
-            tentativa > 1
-              ? `Crie a videoaula sobre: ${topico}\n\nATENÇÃO: a tentativa anterior foi rejeitada por não passar na validação. É obrigatório gerar no mínimo ${MIN_SLIDES} slides, cada um com id no padrão "slide-NN", narração de 60-90 palavras e campo "imagem_prompt" preenchido.`
-              : `Crie a videoaula sobre: ${topico}`,
+          content: montarContentDoUsuario(topico, material, tentativa, MIN_SLIDES),
         },
       ],
       temperature: 0.7,
@@ -263,6 +275,12 @@ export function validarRoteiro(roteiro, { minSlides = 15 } = {}) {
   if (typeof roteiro.titulo_aula !== 'string' || !roteiro.titulo_aula.trim()) erros.push('titulo_aula vazio');
   if (typeof roteiro.introducao !== 'string' || !roteiro.introducao.trim()) erros.push('introducao vazia');
   if (typeof roteiro.conclusao !== 'string' || !roteiro.conclusao.trim()) erros.push('conclusao vazia');
+  if (typeof roteiro.introducao_imagem_prompt !== 'string' || !roteiro.introducao_imagem_prompt.trim()) {
+    avisos.push('introducao_imagem_prompt ausente (será usado o prompt padrão da capa)');
+  }
+  if (typeof roteiro.conclusao_imagem_prompt !== 'string' || !roteiro.conclusao_imagem_prompt.trim()) {
+    avisos.push('conclusao_imagem_prompt ausente (será usado o prompt padrão da capa)');
+  }
 
   if (!Array.isArray(roteiro.slides)) {
     erros.push('slides não é uma lista');
@@ -309,8 +327,18 @@ export function validarRoteiro(roteiro, { minSlides = 15 } = {}) {
 async function main() {
   const topico = process.argv[2];
   if (!topico) {
-    console.error('Uso: node gerar_roteiro.mjs "Tópico da aula"');
+    console.error('Uso: node gerar_roteiro.mjs "Tópico da aula" [--material caminho-do-texto.txt]');
     process.exit(1);
+  }
+
+  const idxMaterial = process.argv.indexOf('--material');
+  let material = null;
+  if (idxMaterial !== -1 && process.argv[idxMaterial + 1]) {
+    material = readFileSync(process.argv[idxMaterial + 1], 'utf8');
+    if (material.length > MATERIAL_MAX_CHARS) {
+      console.error(`  Material de apoio truncado de ${material.length} para ${MATERIAL_MAX_CHARS} caracteres (contexto do llama).`);
+      material = truncarMaterial(material, MATERIAL_MAX_CHARS);
+    }
   }
 
   const slug = slugDe(topico);
@@ -319,7 +347,7 @@ async function main() {
   await mkdir(outDir, { recursive: true });
 
   console.error(`[1/4] Gerando roteiro para: ${topico} ...`);
-  const roteiro = await gerarRoteiro(topico);
+  const roteiro = await gerarRoteiro(topico, { material });
   roteiro.slug = slug;
   roteiro.topico = topico;
 

@@ -90,6 +90,18 @@ export function prefixoNarracao(index, total) {
   return String(index).padStart(2, '0');
 }
 
+/** Prompt da imagem de capa (abertura) — do roteiro ou derivado se ausente (roteiros antigos). */
+export function imagemPromptIntro(roteiro) {
+  if (roteiro?.introducao_imagem_prompt?.trim()) return roteiro.introducao_imagem_prompt;
+  return 'flat illustration, open bible with golden light rays, candle and ancient scroll, warm cream and navy palette, educational minimal style, no text';
+}
+
+/** Prompt da imagem de capa (encerramento) — do roteiro ou derivado se ausente (roteiros antigos). */
+export function imagemPromptConclusao(roteiro) {
+  if (roteiro?.conclusao_imagem_prompt?.trim()) return roteiro.conclusao_imagem_prompt;
+  return 'flat illustration, sunrise over an open bible, dove with olive branch, warm cream and navy palette, educational minimal style, no text';
+}
+
 /** Lista de itens narrados do roteiro (intro + slides + conclusão) com prefixo, prompt e índice. */
 export function itensDoRoteiro(roteiro) {
   const total = roteiro.slides.length + 2;
@@ -205,6 +217,22 @@ export const esc = (s) =>
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+
+/**
+ * Trunca um texto longo (ex.: material extraído de PDF) para caber no contexto
+ * do llama-server. Mantém o início (estrutura/introdução) e o fim (conclusão),
+ * cortando o miolo — em vez de descartar só a cauda.
+ */
+export function truncarMaterial(texto, max) {
+  const t = String(texto ?? '');
+  if (t.length <= max) return t;
+  const ini = Math.floor(max * 0.7);
+  const fim = max - ini;
+  return `${t.slice(0, ini)}\n[... ${t.length - max} caracteres omitidos ...]\n${t.slice(-fim)}`;
+}
+
+/** Limite padrão de caracteres do material de apoio enviado ao llama (default seguro p/ n_ctx=8192). */
+export const MATERIAL_MAX_CHARS = Number(process.env.MATERIAL_MAX_CHARS) || 12000;
 
 /** Mapa de extensão → Content-Type para servir arquivos. */
 export const MIME = {
