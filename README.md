@@ -1,6 +1,6 @@
 # Estúdio de Videoaulas de Teologia
 
-Pipeline local que transforma um **tópico de teologia** em uma **videoaula narrada** (MP4): `roteiro.json` → imagens dos slides → narração (MP3) → vídeo final. Sem `package.json`, sem npm, sem build, sem testes. Scripts Node ESM puros executados com `node`; dependências de terceiros são vendored em `node_modules/`.
+Pipeline local que transforma um **tópico de teologia** em uma **videoaula narrada** (MP4): `roteiro.json` → imagens dos slides → narração (MP3) → vídeo final. Também gera um **vídeo de questionário** separado com 5 perguntas de múltipla escolha e timer de 10 segundos, e um **PDF de estudo** enriquecido. Sem `package.json`, sem npm, sem build, sem testes. Scripts Node ESM puros executados com `node`; dependências de terceiros são vendored em `node_modules/`.
 
 ## Índice
 
@@ -18,12 +18,17 @@ Pipeline local que transforma um **tópico de teologia** em uma **videoaula narr
 
 ## Como funciona
 
-Quatro etapas encadeadas, cada uma consumindo o resultado da anterior:
+Seis etapas encadeadas (4 da videoaula + 1 PDF + 1 questionário), cada uma consumindo o resultado da anterior:
 
 1. **`gerar_roteiro.mjs`** — chama o **llama-server** (OpenAI-compatible) com um prompt de professor de teologia bíblica e gera o `roteiro.json` (título, introdução, ≥15 slides com pontos/narração/referência bíblica/prompt de imagem, conclusão).
 2. **`gerar_imagens.mjs`** — envia cada `imagem_prompt` ao **ComfyUI** (workflow Anima-simples) e salva `slide-NN.png`.
 3. **`gerar_narracao.mjs`** — usa o **Qwen3-TTS** (clone de voz local, padrão `TTS=qwen`) para gerar os MP3s de narração (introdução, cada slide, conclusão) com fallback para `edge-tts` (voz `pt-BR-AntonioNeural`, env `VOZ`).
 4. **`montar_video.mjs`** — consome o `roteiro.json` + PNGs + MP3s e renderiza o MP4 final via **html-video** (Chromium headless + ffmpeg), com frames animados, marca d'água "TEOLOGIA PRA TODOS" e áudio mixado.
+5. **`gerar_pdf.mjs`** — gera um PDF de estudo enriquecido a partir da narração: cada slide ganha notas complementares e referências bíblicas adicionais via llama-server, preenchendo uma página por tema.
+6. **`pipeline_questionario.mjs`** — orquestra:
+   - **`gerar_questionario.mjs`**: llama-server formula 5 perguntas de múltipla escolha (3 opções, resposta correta, narração da pergunta e da resposta) e salva `questionario.json`.
+   - **`gerar_narracao_questionario.mjs`**: gera os MP3s (pergunta + resposta) via Qwen3-TTS.
+   - **`montar_video_questionario.mjs`**: renderiza o vídeo do quiz — a voz lê a pergunta e as opções, a tela fica congelada por 10 s, depois a opção correta é destacada em dourado e narrada. Saída: `<slug>-questionario-1920x1080.mp4`.
 
 Cada etapa imprime seu resultado JSON no stdout; linhas de progresso/log vão para o stderr.
 
@@ -96,9 +101,11 @@ node scripts/servidor.mjs
 | `POST /api/roteiro` `{topico}` | Roda `gerar_roteiro` e retorna o roteiro |
 | `GET/PUT /api/roteiro/:slug` | Lê/salva edições do `roteiro.json` |
 | `POST /api/imagens/:slug` `{slideId?}` | Gera todas ou 1 imagem (regeneração usa seed aleatório) |
-| `POST /api/narracao/:slug` `{slideId?, todos?}` | Narração: só o item, todos (forçado) ou apenas os faltantes/desatualizados (padrão — pula MP3 cujo hash do texto já consta no `manifesto.json`) |
+| `POST /api/narracao/:slug` `{slideId?, todos?}` | Narração: só o item, todos (forçado) ou apenas os faltantes/desatualizados (padrão) |
 | `POST /api/video/:slug` `{fps,width,height,padding}` | Monta o vídeo; retorna `output_path` |
-| `GET /api/artefatos/:slug` | Status por slide: PNG? MP3? desatualizado? duração? |
+| `POST /api/questionario/:slug` | Gera o vídeo de questionário (LLM + TTS + render) em 1 job |
+| `POST /api/pdf/:slug` `{regenerarEnriquecimento?}` | Gera o PDF de estudo enriquecido |
+| `GET /api/artefatos/:slug` | Status por slide: PNG? MP3? desatualizado? + status do questionário e PDF |
 | `GET/PUT /api/config` | Knobs de ambiente (ver [variáveis](#variáveis-de-ambiente--configuração)) |
 | `GET /api/health` | Status dos pré-requisitos: llama-server, ComfyUI, **Qwen3-TTS**, ffmpeg, ffprobe, Chromium |
 | `GET /api/job` | Estado do job: `{ativo, etapa, jobId, iniciadoEm, ultimo}` (sobrevive a refresh da página) |
@@ -119,6 +126,13 @@ node scripts/montar_video.mjs output/<slug>/roteiro.json
 node scripts/gerar_pdf.mjs output/<slug>/roteiro.json            # PDF de estudo
 node scripts/gerar_pdf.mjs output/<slug>/roteiro.json --regenerar-enriquecimento  # novo conteúdo complementar
 node scripts/smoke.mjs                                          # diagnóstico de sintaxe/binários/serviços
+
+# Questionário (pipeline completo: LLM + TTS + vídeo):
+node scripts/pipeline_questionario.mjs output/<slug>/roteiro.json
+# Ou etapas individuais:
+node scripts/gerar_questionario.mjs output/<slug>/roteiro.json            # gera questionario.json
+node scripts/gerar_narracao_questionario.mjs output/<slug>/roteiro.json   # gera os MP3 do quiz
+node scripts/montar_video_questionario.mjs output/<slug>/roteiro.json     # renderiza o vídeo do quiz
 ```
 
 O PDF de estudo é enriquecido via **llama-server**: cada slide ganha notas complementares ("Compreendendo melhor") e referências bíblicas adicionais, preenchendo uma página inteira por tema. O conteúdo fica em cache em `output/<slug>/enriquecimento.json`; `PULAR_ENRIQUECIMENTO=1` pula o complemento e o PDF usa só o texto da narração. Se o llama-server estiver indisponível, o PDF é gerado mesmo assim com o conteúdo atual.
@@ -128,26 +142,31 @@ O PDF de estudo é enriquecido via **llama-server**: cada slide ganha notas comp
 ```
 videoaulas-teologia/
 ├─ scripts/
-│  ├─ pipeline.mjs          # orquestra as 4 etapas em sequência (CLI)
-│  ├─ gerar_roteiro.mjs     # [1/4] roteiro via llama-server
-│  ├─ gerar_imagens.mjs     # [2/4] slides via ComfyUI (Anima-simples)
-│  ├─ gerar_narracao.mjs    # [3/4] MP3s via Qwen3-TTS (clone de voz, fallback edge-tts)
-│  ├─ montar_video.mjs      # [4/4] MP4 via html-video (Chromium + ffmpeg)
-│  ├─ gerar_pdf.mjs         # [5/5] PDF de estudo enriquecido (llama-server + Playwright)
-│  ├─ servidor.mjs          # backend web (HTTP + SSE) da interface
-│  ├─ util.mjs              # helpers compartilhados (slugDe, hashDe, esc, MIME, prefixoNarracao, itensDoRoteiro)
-│  ├─ smoke.mjs             # diagnóstico de sintaxe/binários/serviços (exit 0/1)
-│  └─ comfy_test.json       # workflow de teste com outros modelos (não usado no pipeline)
+│  ├─ pipeline.mjs                       # orquestra as 4 etapas da videoaula (CLI)
+│  ├─ pipeline_questionario.mjs          # orquestra o vídeo de questionário (CLI + servidor)
+│  ├─ gerar_roteiro.mjs                  # [1/4] roteiro via llama-server
+│  ├─ gerar_imagens.mjs                  # [2/4] slides via ComfyUI (Anima-simples)
+│  ├─ gerar_narracao.mjs                 # [3/4] MP3s via Qwen3-TTS (clone de voz, fallback edge-tts)
+│  ├─ montar_video.mjs                   # [4/4] MP4 da videoaula via html-video (Chromium + ffmpeg)
+│  ├─ gerar_pdf.mjs                      # PDF de estudo enriquecido (llama-server + Playwright)
+│  ├─ gerar_questionario.mjs             # [quiz 1/3] 5 perguntas de múltipla escolha via llama-server
+│  ├─ gerar_narracao_questionario.mjs    # [quiz 2/3] MP3s de pergunta + resposta via Qwen3-TTS
+│  ├─ montar_video_questionario.mjs      # [quiz 3/3] vídeo do quiz (timer 10s + destaque da resposta)
+│  ├─ servidor.mjs                       # backend web (HTTP + SSE) da interface
+│  ├─ util.mjs                           # helpers compartilhados (slugDe, hashDe, esc, MIME, prefixoNarracao, itensDoRoteiro)
+│  ├─ smoke.mjs                          # diagnóstico de sintaxe/binários/serviços (exit 0/1)
+│  └─ comfy_test.json                    # workflow de teste com outros modelos (não usado no pipeline)
 ├─ web/
-│  ├─ index.html            # SPA (estrutura)
-│  ├─ style.css             # tema escuro navy/gold
-│  └─ app.js                # lógica da UI (fetch + EventSource)
-├─ node_modules/            # deps vendored (html-video core, yaml, playwright)
-├─ output/<slug>/           # artefatos por aula (roteiro, PNGs, MP3s, MP4)
-├─ .html-video/             # cache de render (seguro apagar)
-├─ .config.json             # config persistida pela UI
-├─ iniciar.bat              # sobe/encerra llama-server + ComfyUI + web
-├─ AGENTS.md                # instruções para agentes de IA (dev)
+│  ├─ index.html                         # SPA (estrutura)
+│  ├─ style.css                          # tema escuro navy/gold
+│  └─ app.js                             # lógica da UI (fetch + EventSource)
+├─ node_modules/                         # deps vendored (html-video core, yaml, playwright)
+├─ output/<slug>/                        # artefatos por aula (roteiro, PNGs, MP3s, MP4s, questionario.json)
+├─ pdfs/                                 # PDFs de estudo (centralizados, fora de output/)
+├─ .html-video/                          # cache de render (seguro apagar)
+├─ .config.json                          # config persistida pela UI
+├─ iniciar.bat                           # sobe/encerra llama-server + ComfyUI + web
+├─ AGENTS.md                             # instruções para agentes de IA (dev)
 └─ README.md
 ```
 
@@ -181,6 +200,8 @@ Tudo sai em `output/<slug>/`, onde `slug` = tópico em minúsculas, sem acentos,
 - `<slug>-<LARGURA>x<ALTURA>.mp4` (ex.: `o-que-e-teologia-1920x1080.mp4`; o formato vai no nome para 16:9 e 9:16 coexistirem)
 
 Os PDFs de estudo vão centralizados em `pdfs/` (fora de `output/`), apenas com PDFs: `<slug>-estudo.pdf`. O cache do conteúdo complementar (`enriquecimento.json`) fica em `output/<slug>/` junto do roteiro.
+
+O vídeo do questionário sai em `output/<slug>/<slug>-questionario-<LARGURA>x<ALTURA>.mp4` (ex.: `o-que-e-teologia-questionario-1920x1080.mp4`). O `artefatos()` do servidor separa automaticamente vídeos principais de vídeos de questionário (pelo sufixo `-questionario-`) para que o status e os players da UI exibam cada um em sua devida etapa.
 
 Regras de idempotência:
 

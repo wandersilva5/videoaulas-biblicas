@@ -6,6 +6,7 @@ const ETAPAS = [
   { n: 3, rotulo: 'Narração' },
   { n: 4, rotulo: 'Vídeo' },
   { n: 5, rotulo: 'PDF' },
+  { n: 6, rotulo: 'Questionário' },
 ];
 
 const estado = {
@@ -22,7 +23,7 @@ const estado = {
   logs: [],
 };
 
-const NOME_ETAPA = { roteiro: 'Roteiro', imagens: 'Imagens', narracao: 'Narração', video: 'Vídeo', pdf: 'PDF' };
+const NOME_ETAPA = { roteiro: 'Roteiro', imagens: 'Imagens', narracao: 'Narração', video: 'Vídeo', pdf: 'PDF', questionario: 'Questionário' };
 
 // Cópia browser-safe de esc/slugDe (util.mjs não pode ser importado no navegador:
 // depende de node:crypto). Mantidas em sincronia com scripts/util.mjs.
@@ -179,7 +180,8 @@ function statusEtapa(n) {
   }
   if (n === 3) return st.audioCompleto ? 'ok' : 'alerta';
   if (n === 4) return st.video.existe ? 'ok' : 'erro';
-  return st.pdf?.existe ? 'ok' : 'erro';
+  if (n === 5) return st.pdf?.existe ? 'ok' : 'erro';
+  return st.questionario?.existe ? 'ok' : 'erro';
 }
 
 function renderStepper() {
@@ -212,7 +214,8 @@ function mudarEtapa(n) {
   else if (n === 2) renderEtapa2(container);
   else if (n === 3) renderEtapa3(container);
   else if (n === 4) renderEtapa4(container);
-  else renderEtapa5(container);
+  else if (n === 5) renderEtapa5(container);
+  else renderEtapa6(container);
   sincronizarBotoes();
   renderStatusJob();
 }
@@ -669,6 +672,46 @@ function renderEtapa5(el) {
 }
 
 // ---------------------------------------------------------------------------
+// Etapa 6 — Vídeo de Questionário
+// ---------------------------------------------------------------------------
+function renderEtapa6(el) {
+  const st = estado.artefatos;
+  const quiz = st.questionario;
+
+  const videoHtml = quiz?.existe
+    ? `
+      <div class="cartao">
+        <div class="video-item">
+          <div class="video-rotulo">
+            <span>${esc(quiz.arquivo)}</span>
+            <a class="btn btn-mini" href="/media/${estado.slug}/${esc(quiz.arquivo)}" download title="Baixar vídeo do questionário">⬇ download</a>
+          </div>
+          <video class="player-video" controls src="/media/${estado.slug}/${esc(quiz.arquivo)}"></video>
+        </div>
+        <p class="msg-progresso" style="margin-top:10px">Gerado em ${new Date(quiz.mtime).toLocaleString('pt-BR')} · ${(quiz.tamanho / (1024 * 1024)).toFixed(1)} MB</p>
+      </div>`
+    : '<p class="msg-progresso" style="color:var(--alerta)">Vídeo do questionário ainda não gerado.</p>';
+
+  el.innerHTML = `
+    <div class="etapa-topo">
+      <h3>Vídeo de Questionário</h3>
+      <button class="btn btn-primario" data-action="gerar-questionario">🧠 Gerar vídeo de questionário</button>
+    </div>
+    <p class="msg-progresso">O modelo formula <strong>5 perguntas de múltipla escolha</strong> com base no conteúdo da aula. Cada pergunta tem <strong>10 segundos</strong> para o espectador responder antes de a resposta correta ser revelada e narrada. Este vídeo é separado da videoaula principal.</p>
+    <div class="cartao" style="padding: 16px 20px; background: rgba(224,180,90,0.07); border-color: rgba(224,180,90,0.3);">
+      <strong style="color: var(--dourado)">Formato do vídeo:</strong>
+      <ul style="margin-top: 8px; padding-left: 20px; color: var(--texto-2); font-size: 14px; line-height: 1.8;">
+        <li>Tema da pergunta + número + texto da pergunta</li>
+        <li>3 opções de resposta (A, B, C)</li>
+        <li>10 segundos de espera com a tela congelada</li>
+        <li>A voz lê a pergunta + opções antes do timer</li>
+        <li>Após o timer, a opção correta é destacada e narrada</li>
+      </ul>
+    </div>
+    ${videoHtml}`;
+}
+
+// ---------------------------------------------------------------------------
 // Modal fullscreen de slides
 // ---------------------------------------------------------------------------
 function abrirModalSlide(i) {
@@ -865,6 +908,21 @@ $('#etapa-container').addEventListener('click', async (ev) => {
     return rodarJob(
       api(`/api/pdf/${estado.slug}`, { method: 'POST', body: JSON.stringify({ regenerarEnriquecimento: true }) }),
       'PDF regenerado com novo conteúdo complementar!',
+    );
+  }
+  if (acao === 'gerar-questionario') {
+    if (estado.servicos && (!servicoOk('llama') || !servicoOk('qwen') || !servicoOk('ffmpeg') || !servicoOk('chromium'))) {
+      const faltam = [];
+      if (!servicoOk('llama')) faltam.push('llama-server');
+      if (!servicoOk('qwen')) faltam.push('Qwen3-TTS');
+      if (!servicoOk('ffmpeg')) faltam.push('ffmpeg');
+      if (!servicoOk('chromium')) faltam.push('Chromium');
+      return toast(`Serviços indisponíveis: ${faltam.join(', ')}`, true);
+    }
+    if (!confirm('Gerar o vídeo de questionário? O modelo vai criar 5 perguntas de múltipla escolha e gerar a narração e o vídeo. Isso pode levar alguns minutos.')) return;
+    return rodarJob(
+      api(`/api/questionario/${estado.slug}`, { method: 'POST' }),
+      'Vídeo de questionário gerado com sucesso!',
     );
   }
 });
@@ -1148,9 +1206,9 @@ sse.addEventListener('progresso', (ev) => {
       }
     }, 400);
   }
-  if (msg.etapa === 'video' && msg.tipo === 'progress' && estado.etapa === 4) {
+  if ((msg.etapa === 'video' || msg.etapa === 'questionario') && msg.tipo === 'progress' && (estado.etapa === 4 || estado.etapa === 6)) {
     const m = /\((\d+)%\)/.exec(msg.linha);
-    setProgressoVideo(m ? Number(m[1]) : 0, msg.linha);
+    if (estado.etapa === 4 && msg.etapa === 'video') setProgressoVideo(m ? Number(m[1]) : 0, msg.linha);
   }
   adicionarLog(msg);
 });

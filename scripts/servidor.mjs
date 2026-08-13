@@ -25,7 +25,7 @@ const DEFAULTS = {
   VOZ: 'pt-BR-AntonioNeural',
   PORTA: '5176',
   LLAMA_EXE: 'E:\\llama.cpp\\llama-server.exe',
-  LLAMA_MODEL: 'E:\\llama.cpp\\models\\Qwen3.5-9B-Q4_K_M.gguf',
+  LLAMA_MODEL: 'E:\\llama.cpp\\models\\Qwen2.5-7B-Instruct.Q5_K_M.gguf',
   COMFY_DIR: 'D:\\ComfyUI_windows_portable',
 };
 
@@ -251,14 +251,27 @@ async function artefatos(slug) {
     imagem: imagemDe('conclusao', conclImg, imagemPromptConclusao(roteiro)),
   };
 
-  const videos = (await readdir(outDir))
-    .filter((f) => f.toLowerCase().endsWith('.mp4'))
+  const todosVideos = (await readdir(outDir))
+    .filter((f) => f.toLowerCase().endsWith('.mp4'));
+
+  const videosPrincipais = todosVideos
+    .filter((f) => !f.includes('-questionario-'))
     .map((f) => {
       const p = join(outDir, f);
       return { arquivo: f, mtime: mtimeDe(p), tamanho: existsSync(p) ? statSync(p).size : 0 };
     })
     .sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
-  const ultimo = videos[0] ?? null;
+  const ultimoPrincipal = videosPrincipais[0] ?? null;
+
+  const videosQuiz = todosVideos
+    .filter((f) => f.includes('-questionario-'))
+    .map((f) => {
+      const p = join(outDir, f);
+      return { arquivo: f, mtime: mtimeDe(p), tamanho: existsSync(p) ? statSync(p).size : 0 };
+    })
+    .sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
+  const ultimoQuiz = videosQuiz[0] ?? null;
+
   const pdfPath = join(PDFS_DIR, `${slug}-estudo.pdf`);
   return {
     slug,
@@ -267,12 +280,18 @@ async function artefatos(slug) {
     slides,
     conclusao,
     video: {
-      existe: !!ultimo,
-      mtime: ultimo?.mtime ?? null,
-      tamanho: ultimo?.tamanho ?? 0,
-      arquivo: ultimo?.arquivo ?? null,
+      existe: !!ultimoPrincipal,
+      mtime: ultimoPrincipal?.mtime ?? null,
+      tamanho: ultimoPrincipal?.tamanho ?? 0,
+      arquivo: ultimoPrincipal?.arquivo ?? null,
     },
-    videos,
+    videos: videosPrincipais,
+    questionario: {
+      existe: !!ultimoQuiz,
+      mtime: ultimoQuiz?.mtime ?? null,
+      tamanho: ultimoQuiz?.tamanho ?? 0,
+      arquivo: ultimoQuiz?.arquivo ?? null,
+    },
     pdf: {
       existe: existsSync(pdfPath),
       mtime: mtimeDe(pdfPath),
@@ -856,6 +875,17 @@ const server = createServer(async (req, res) => {
       }
       const arquivo = `${slug}-estudo.pdf`;
       return json(res, 200, { ok: true, arquivo, url: `/pdfs/${arquivo}` });
+    }
+
+    // --- Questionário (Quiz) ---
+    if (recurso === 'questionario' && req.method === 'POST') {
+      if (!existsSync(roteiroPath)) return json(res, 404, { erro: 'Roteiro não existe' });
+      try {
+        await runJob({ etapa: 'questionario', args: [join(SCRIPTS_DIR, 'pipeline_questionario.mjs'), roteiroPath] });
+      } catch (e) {
+        return json(res, statusDeErroJob(e), { erro: e.message });
+      }
+      return json(res, 200, { ok: true });
     }
 
     return json(res, 404, { erro: 'Rota não encontrada' });

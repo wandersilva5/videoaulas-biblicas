@@ -27,7 +27,7 @@ const WORKFLOW_TEMPLATE = {
   "5": { class_type: "CLIPTextEncode", inputs: { clip: ["4", 1], text: "__POSITIVE__" } },
   "6": { class_type: "CLIPTextEncode", inputs: { clip: ["4", 1], text: NEGATIVE_PROMPT } },
   "7": { class_type: "EmptyLatentImage", inputs: { width: 1152, height: 640, batch_size: 1 } },
-  "8": { class_type: "KSampler", inputs: { model: ["4", 0], positive: ["5", 0], negative: ["6", 0], latent_image: ["7", 0], seed: "__SEED__", steps: 8, cfg: 5, sampler_name: "er_sde", scheduler: "simple", denoise: 1.0 } },
+  "8": { class_type: "KSampler", inputs: { model: ["4", 0], positive: ["5", 0], negative: ["6", 0], latent_image: ["7", 0], seed: "__SEED__", steps: 12, cfg: 5, sampler_name: "er_sde", scheduler: "simple", denoise: 1.0 } },
   "9": { class_type: "ControlOrderFreeMemory", inputs: { persist_any_1: ["8", 0], free_memory: true } },
   "10": { class_type: "VAEDecode", inputs: { samples: ["9", 0], vae: ["3", 0] } },
   "11": { class_type: "SaveImage", inputs: { images: ["10", 0], filename_prefix: "teologia_slide" } },

@@ -10,13 +10,13 @@ import { fileURLToPath } from 'node:url';
 /**
  * Nome do modelo (id da API) usado nas chamadas ao llama-server.
  * Precedência: env `LLAMA_MODELO` → basename de `LLAMA_MODEL` (caminho do
- * arquivo GGUF, ex.: `E:\llama.cpp\models\Qwen3.5-9B-Q4_K_M.gguf`) → padrão
- * `Qwen3.5-9B-Q4_K_M.gguf`. O id do llama-server é o nome do arquivo carregado.
+ * arquivo GGUF, ex.: `E:\llama.cpp\models\Qwen2.5-7B-Instruct.Q5_K_M.gguf`) → padrão
+ * `Qwen2.5-7B-Instruct.Q5_K_M.gguf`. O id do llama-server é o nome do arquivo carregado.
  */
 export function modeloLLama() {
   return (
     process.env.LLAMA_MODELO ||
-    (process.env.LLAMA_MODEL ? basename(process.env.LLAMA_MODEL) : 'Qwen3.5-9B-Q4_K_M.gguf')
+    (process.env.LLAMA_MODEL ? basename(process.env.LLAMA_MODEL) : 'Qwen2.5-7B-Instruct.Q5_K_M.gguf')
   );
 }
 
