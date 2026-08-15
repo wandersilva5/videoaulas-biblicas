@@ -14,7 +14,7 @@ import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { prefixoNarracao, esc } from './util.mjs';
+import { prefixoNarracao, esc, musicaFundo } from './util.mjs';
 import {
   AssetStore,
   EngineRegistry,
@@ -31,6 +31,12 @@ const FPS = Number(process.env.VIDEO_FPS) || 24;
 const WIDTH = Number(process.env.VIDEO_WIDTH) || 1920;
 const HEIGHT = Number(process.env.VIDEO_HEIGHT) || 1080;
 const SLIDE_PADDING_SEC = process.env.VIDEO_PADDING !== undefined && process.env.VIDEO_PADDING !== '' ? Number(process.env.VIDEO_PADDING) : 0.3;
+
+// Música de fundo: volume baixo (dB) para não competir com a voz + fade in suave.
+// Defina MUSICA_FUNDO='' para desligar, MUSICA_VOLUME_DB para ajustar o nível.
+const MUSICA_FUNDO = process.env.MUSICA_FUNDO ?? musicaFundo();
+const MUSICA_VOLUME_DB = Number(process.env.MUSICA_VOLUME_DB || -20);
+const MUSICA_FADE_IN_SEC = Number(process.env.MUSICA_FADE_IN_SEC || 2);
 
 // Escala tipográfica proporcional à largura (referência 16:9 = 1920px de largura).
 // Assim o layout adapta a proporção escolhida (9:16, 4:5, etc.) sem quebrar.
@@ -311,10 +317,24 @@ async function main() {
   await copyFile(capaConcl, capaConclDest);
   await orchestrator.writeFrameHtml(project.id, 'conclusao', gerarFrameOutro(capaConclDest));
 
-  // 6. Narração como soundtrack do projeto
-  const proj = await orchestrator.addFileAsset(project.id, narracaoFull, 'Narração completa');
-  const asset = proj.assets[proj.assets.length - 1];
-  proj.soundtrack = { narrationAssetId: asset.id, narrationVolumeDb: 0 };
+  // 6. Narração como soundtrack do projeto (música de fundo opcional, baixa e com fade in)
+  const assetsProjeto = [];
+  let proj = await orchestrator.addFileAsset(project.id, narracaoFull, 'Narração completa');
+  assetsProjeto.push(proj.assets[proj.assets.length - 1]);
+  if (MUSICA_FUNDO && existsSync(MUSICA_FUNDO)) {
+    console.error(`  música de fundo: ${MUSICA_FUNDO} (${MUSICA_VOLUME_DB} dB, fade in ${MUSICA_FADE_IN_SEC}s)`);
+    proj = await orchestrator.addFileAsset(project.id, MUSICA_FUNDO, 'Música de fundo');
+    assetsProjeto.push(proj.assets[proj.assets.length - 1]);
+  }
+  proj.soundtrack = {
+    narrationAssetId: assetsProjeto[0].id,
+    narrationVolumeDb: 0,
+  };
+  if (assetsProjeto.length > 1) {
+    proj.soundtrack.musicAssetId = assetsProjeto[1].id;
+    proj.soundtrack.musicVolumeDb = MUSICA_VOLUME_DB;
+    proj.soundtrack.fadeInSec = MUSICA_FADE_IN_SEC;
+  }
   await projects.save(proj);
 
   // 7. Renderizar

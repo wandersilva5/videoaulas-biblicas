@@ -3,7 +3,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { request as httpRequest } from 'node:http';
-import { slugDe, modeloLLama, truncarMaterial, MATERIAL_MAX_CHARS } from './util.mjs';
+import { slugDe, modeloLLama, truncarMaterial, referenciasPorExtenso, MATERIAL_MAX_CHARS } from './util.mjs';
 
 const LLAMA_URL = process.env.LLAMA_URL || 'http://127.0.0.1:8091';
 
@@ -55,7 +55,7 @@ Gere SEMPRE um JSON válido, sem markdown, sem texto extra, com esta estrutura e
       "pontos": ["ponto 1 curto", "ponto 2 curto", "ponto 3 curto"],
       "narracao": "Texto de 60-90 palavras narrado, explicando o slide de forma didática e fluida, como se estivesse apresentando, citando a referência bíblica",
       "referencia_biblica": "Livro capítulo:versículo (ex.: João 3:16)",
-      "imagem_prompt": "Prompt de imagem em inglês para gerar ilustração didática deste conceito teológico. Estilo flat illustration, clean educational diagram, cores sóbrias (azul marinho, dourado, creme). Qualquer texto que aparecer na imagem deve estar em português do Brasil (pt-BR). Exemplo: 'flat illustration, open bible with golden light rays, candle and scroll, warm cream and navy palette, educational minimal style, text in Portuguese'"
+      "imagem_prompt": "Prompt de imagem em inglês que descreve a CENA ESPECÍFICA deste slide (baseada no título e nos pontos). Ex.: se o slide fala do argumento de Platão, descreva uma cena de filósofo grego numa ágora; se fala da doutrina, uma cena de ensino. Estilo flat illustration, clean educational diagram, cores sóbrias (azul marinho, dourado, creme). Qualquer texto que aparecer na imagem deve estar em português do Brasil (pt-BR)"
     }
   ],
   "conclusao": "3-5 frases de encerramento narradas: comece agradecendo a audiência, feche com uma aplicação prática e outra referência bíblica, e termine convidando a apoiar o projeto — inscrever-se no canal, curtir e compartilhar o vídeo para que mais pessoas sejam abençoadas, e ler a descrição para saber como apoiar de outras formas",
@@ -70,8 +70,8 @@ REGRAS:
 - Referências bíblicas: TODOS os slides, a introdução e a conclusão devem citar ao menos uma referência bíblica (livro capítulo:versículo) no campo "referencia_biblica" e mencioná-la na narração. Use a versão Almeida Revista e Corrigida (ARC) como base para o texto das citações.
 - As referências devem estar corretas e fiéis ao ensino bíblico, com o estudo permanecendo educacional, cristão e edificante (fé, doutrina e prática).
 - Explicação de termos: sempre que um termo técnico ou importante aparecer (ex.: teologia, hermenêutica, exegese, escatologia, soteriologia, graça, santificação, expiação, justificação, etc.), dedique um ponto do slide para explicá-lo de forma simples, com origem etimológica quando ajudar (ex.: "Teologia vem do grego: Teo = Deus + logia = estudo, ou seja, estudo sobre Deus"). Linguagem acessível, como quem conversa com um iniciante, sem jargão acadêmico.
-- Narração legível por leitor de voz (TTS): nos campos de narração (introducao, slides, conclusao) escreva as referências bíblicas por extenso como seriam faladas, ex.: "Primeira Timóteo 3, 1" em vez de "1 Timóteo 3:1", "João 3, 16" em vez de "João 3:16". Já o campo "referencia_biblica" deve continuar no formato padrão (ex.: "1 Timóteo 3:1").
-- imagem_prompt: sempre descrever cena flat illustration educativa. Se houver qualquer texto na imagem, ele deve estar em português do Brasil (pt-BR) e sem erros de ortografia; idealmente minimize texto na imagem.`;
+- Narração legível por leitor de voz (TTS): nos campos de narração (introducao, slides, conclusao) escreva as referências bíblicas por extenso, como seriam lidas em voz alta: livro numerado vira ordinal ("1 Coríntios" → "Primeira Coríntios", "2 Timóteo" → "Segunda Timóteo") e capítulo/versículo ficam totalmente por extenso (ex.: "João capítulo três e versículo dezesseis" em vez de "João 3:16"; "Primeira Pedro capítulo um, versículos do um a seis" em vez de "1 Pedro 1:1-6"). Já o campo "referencia_biblica" deve continuar no formato padrão (ex.: "1 Timóteo 3:1").
+- imagem_prompt: CADA slide deve ter um prompt de imagem ÚNICO e específico, descrevendo a cena daquele assunto em particular (use o título e os pontos como base). NUNCA repita o mesmo prompt em dois slides nem copie o exemplo da estrutura: cada um deve retratar a cena única do tema falado naquele slide. Se houver qualquer texto na imagem, ele deve estar em português do Brasil (pt-BR) e sem erros de ortografia; idealmente minimize texto na imagem.`;
 
 /** Texto do material de apoio (extraído de PDF) embutido no prompt do usuário. */
 function montarContentDoUsuario(topico, material, tentativa, MIN_SLIDES) {
@@ -126,7 +126,11 @@ export async function gerarRoteiro(topico, { material } = {}) {
 
     if (reparos > 0) console.error(`  Roteiro normalizado: ${reparos} campo(s) ajustado(s) automaticamente.`);
     for (const a of avisos) console.error(`  aviso: ${a}`);
-    if (valido) return roteiro;
+    if (valido) {
+      const prompsRegerados = await regerarPromptsImagemDuplicados(roteiro);
+      if (prompsRegerados > 0) console.error(`  Prompts de imagem regerados: ${prompsRegerados} slide(s) com cena específica.`);
+      return roteiro;
+    }
 
     for (const e of erros) console.error(`  erro: ${e}`);
     ultimaRota = roteiro;
@@ -138,6 +142,81 @@ export async function gerarRoteiro(topico, { material } = {}) {
   throw new Error(
     `Modelo não gerou um roteiro válido após ${maxTentativas} tentativas (${resumo}).`,
   );
+}
+
+/**
+ * Detecta prompts de imagem repetidos (o modelo costuma copiar o exemplo da
+ * estrutura) e os regera com cena específica de cada slide via llama-server.
+ * Retorna quantos slides foram corrigidos. Nunca altera introducao/conclusao.
+ */
+async function regerarPromptsImagemDuplicados(roteiro) {
+  if (!roteiro?.slides?.length) return 0;
+  const vistos = new Map();
+  const duplicados = new Set();
+  for (const s of roteiro.slides) {
+    const p = String(s.imagem_prompt || '').trim();
+    if (!p) continue;
+    if (vistos.has(p)) duplicados.add(s.id);
+    vistos.set(p, (vistos.get(p) || 0) + 1);
+  }
+  if (!duplicados.size) return 0;
+
+  const alvo = roteiro.slides.filter((s) => duplicados.has(s.id));
+  const lista = alvo
+    .map(
+      (s, i) =>
+        `${i + 1}. Slide "${s.titulo}" — pontos: ${(s.pontos || []).join('; ')} — assunto narrado: ${s.narracao}`,
+    )
+    .join('\n');
+
+  const body = {
+    model: modeloLLama(),
+    messages: [
+      {
+        role: 'system',
+        content:
+          'Você escreve prompts de imagem flat illustration educativa para videoaulas de teologia. Responda APENAS com um JSON válido no formato {"prompts": ["...", "..."]}, um prompt por slide, na mesma ordem da lista. Cada prompt deve descrever a CENA ESPECÍFICA do assunto daquele slide (use o título e os pontos como base), em inglês, com estilo flat illustration, clean educational diagram, cores sóbrias (azul marinho, dourado, creme). Idealmente sem texto na imagem; se houver texto, em português do Brasil. Os prompts não podem se repetir.',
+      },
+      {
+        role: 'user',
+        content: `Gere um prompt de imagem único e específico para cada um destes slides:\n${lista}`,
+      },
+    ],
+    temperature: 0.8,
+    max_tokens: 4096,
+    stream: false,
+  };
+
+  const resp = await postJson(`${LLAMA_URL}/v1/chat/completions`, body);
+  if (resp.status !== 200) {
+    console.error(`  Falha ao regerar prompts de imagem (llama ${resp.status}); mantendo os atuais.`);
+    return 0;
+  }
+  let data;
+  try {
+    data = JSON.parse(resp.text);
+  } catch {
+    return 0;
+  }
+  const content = data.choices?.[0]?.message?.content ?? '';
+  let result;
+  try {
+    result = extrairJson(content);
+  } catch {
+    return 0;
+  }
+  const prompts = result?.prompts;
+  if (!Array.isArray(prompts) || prompts.length !== alvo.length) return 0;
+
+  let corrigidos = 0;
+  alvo.forEach((s, i) => {
+    const novo = String(prompts[i] || '').trim();
+    if (novo.length > 5) {
+      s.imagem_prompt = novo;
+      corrigidos++;
+    }
+  });
+  return corrigidos;
 }
 
 /**
@@ -237,6 +316,18 @@ const padSlide = (i) => String(i + 1).padStart(2, '0');
 export function repararRoteiro(roteiro) {
   let reparos = 0;
   if (!roteiro || typeof roteiro !== 'object' || !Array.isArray(roteiro.slides)) return reparos;
+
+  // Referências bíblicas nos textos NARRADOS viram a forma falada (TTS):
+  // "1 Timóteo 3:16" → "Primeira Timóteo 3, 16"; "João 3:16" → "João 3, 16".
+  const narrar = (campo) => {
+    if (typeof campo !== 'string') return campo;
+    const novo = referenciasPorExtenso(campo);
+    if (novo !== campo) reparos++;
+    return novo;
+  };
+  roteiro.introducao = narrar(roteiro.introducao);
+  roteiro.conclusao = narrar(roteiro.conclusao);
+
   roteiro.slides.forEach((s, i) => {
     if (!s || typeof s !== 'object') return;
     const num = padSlide(i);
@@ -252,6 +343,7 @@ export function repararRoteiro(roteiro) {
       s.pontos = [];
       reparos++;
     }
+    s.narracao = narrar(s.narracao);
   });
   return reparos;
 }

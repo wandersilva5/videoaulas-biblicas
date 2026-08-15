@@ -4,7 +4,8 @@ import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { esc } from './util.mjs';
+import { esc, concatenarAudiosComGaps, PREFIX_INTRO_QUESTIONARIO, TEXTO_INTRO_QUESTIONARIO, musicaFundo } from './util.mjs';
+import { gerarNarracaoItem } from './gerar_narracao.mjs';
 import {
   AssetStore,
   EngineRegistry,
@@ -21,6 +22,12 @@ const FPS = Number(process.env.VIDEO_FPS) || 24;
 const WIDTH = Number(process.env.VIDEO_WIDTH) || 1920;
 const HEIGHT = Number(process.env.VIDEO_HEIGHT) || 1080;
 
+// Música de fundo: volume baixo (dB) para não competir com a voz + fade in suave.
+// Defina MUSICA_FUNDO='' para desligar, MUSICA_VOLUME_DB para ajustar o nível.
+const MUSICA_FUNDO = process.env.MUSICA_FUNDO ?? musicaFundo();
+const MUSICA_VOLUME_DB = Number(process.env.MUSICA_VOLUME_DB || -20);
+const MUSICA_FADE_IN_SEC = Number(process.env.MUSICA_FADE_IN_SEC || 2);
+
 const s = (v) => (v * (WIDTH / 1920)).toFixed(1);
 
 const TIMER_GAP_SEC = 10.0;
@@ -29,38 +36,6 @@ const TRANSITION_GAP_SEC = 1.0;
 async function medirDuracaoMp3(path) {
   const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', path]);
   return parseFloat(stdout.trim());
-}
-
-async function concatAudiosComGaps(audios, gaps, outPath) {
-  const { spawn } = await import('node:child_process');
-  const args = ['-y'];
-  const n = audios.length;
-  const filters = [];
-  const labels = [];
-  for (let i = 0; i < n; i++) {
-    args.push('-i', audios[i].path);
-    filters.push(`[${i}:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`);
-    labels.push(`[a${i}]`);
-    
-    // Add gap after this audio if specified and > 0
-    if (i < n - 1 && gaps[i] > 0) {
-      filters.push(`anullsrc=r=44100:cl=stereo:d=${gaps[i]}[pad${i}]`);
-      labels.push(`[pad${i}]`);
-    }
-  }
-  filters.push(`${labels.join('')}concat=n=${labels.length}:v=0:a=1[out]`);
-  args.push('-filter_complex', filters.join(';'), '-map', '[out]', '-c:a', 'libmp3lame', '-b:a', '192k', outPath);
-
-  await new Promise((resolve, reject) => {
-    const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stderr = '';
-    proc.stderr.on('data', (d) => (stderr += d.toString()));
-    proc.on('error', reject);
-    proc.on('exit', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`ffmpeg concat audio exit ${code}: ${stderr.slice(-1000)}`));
-    });
-  });
 }
 
 function gerarFrameQuestao(q, imgName, mostrarResposta, delayContagem = 0) {
@@ -159,6 +134,39 @@ function gerarFrameQuestao(q, imgName, mostrarResposta, delayContagem = 0) {
 </html>`;
 }
 
+function gerarFrameIntroQuestionario(imgName) {
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<title>Início do Questionário</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { width: ${WIDTH}px; height: ${HEIGHT}px; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; position: relative; background: #0d1b2a; display: flex; align-items: center; justify-content: center; }
+  .bg { position: absolute; inset: 0; }
+  .bg img { width: 100%; height: 100%; object-fit: cover; }
+  .veil { position: absolute; inset: 0; background:
+    radial-gradient(ellipse 70% 60% at 50% 48%, rgba(13,27,42,0.80) 0%, rgba(13,27,42,0.45) 55%, rgba(13,27,42,0) 78%),
+    linear-gradient(180deg, rgba(13,27,42,0.55) 0%, rgba(13,27,42,0.68) 55%, rgba(13,27,42,0.9) 100%); }
+  .card { position: relative; text-align: center; max-width: ${s(1500)}px; padding: ${s(60)}px ${s(70)}px; }
+  .kicker { font-size: ${s(30)}px; letter-spacing: ${s(8)}px; text-transform: uppercase; color: #e0b45a; font-weight: 700; margin-bottom: ${s(30)}px; text-shadow: 0 2px 8px rgba(0,0,0,0.95), 0 0 24px rgba(0,0,0,0.6); opacity: 0; animation: fadeUp 0.7s ease-out 0.3s forwards; }
+  h1 { font-size: ${s(72)}px; color: #ffffff; font-weight: 700; line-height: 1.15; margin-bottom: ${s(28)}px; text-shadow: 0 2px 6px rgba(0,0,0,0.95), 0 4px 22px rgba(0,0,0,0.75), 0 0 40px rgba(0,0,0,0.45); opacity: 0; animation: fadeUp 0.8s ease-out 0.8s forwards; }
+  .sub { font-size: ${s(36)}px; color: #dce5ef; text-shadow: 0 2px 6px rgba(0,0,0,0.95), 0 3px 16px rgba(0,0,0,0.75); opacity: 0; animation: fadeUp 0.8s ease-out 1.4s forwards; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(${s(30)}px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+  <div class="bg"><img src="${esc(imgName)}" /></div>
+  <div class="veil"></div>
+  <div class="card">
+    <div class="kicker">Questionário</div>
+    <h1>Hora de testar o que você aprendeu!</h1>
+    <div class="sub">Agora vamos ao nosso questionário sobre o que aprendemos!</div>
+  </div>
+</body>
+</html>`;
+}
+
 async function main() {
   const roteiroPath = process.argv[2];
   if (!roteiroPath) {
@@ -183,6 +191,16 @@ async function main() {
   const audios = [];
   const gaps = [];
 
+  const introPath = join(outDir, `${PREFIX_INTRO_QUESTIONARIO}-narracao.mp3`);
+  const temIntro = existsSync(introPath);
+  if (!temIntro) {
+    console.error(`Aviso: narração de introdução do questionário não encontrada (${introPath}) — gerando ...`);
+    await gerarNarracaoItem({ id: 'intro-questionario', titulo: 'Introdução do questionário', texto: TEXTO_INTRO_QUESTIONARIO, prefix: PREFIX_INTRO_QUESTIONARIO }, outDir);
+  }
+  const durIntro = await medirDuracaoMp3(introPath);
+  audios.push({ id: 'intro-questionario', path: introPath, durationSec: durIntro });
+  gaps.push(TRANSITION_GAP_SEC);
+
   for (let i = 0; i < questionario.perguntas.length; i++) {
     const prefix = `q${String(i + 1).padStart(2, '0')}`;
     const pPath = join(outDir, `${prefix}-pergunta-narracao.mp3`);
@@ -203,7 +221,7 @@ async function main() {
   }
 
   const narracaoFull = join(outDir, 'questionario-narracao-full.mp3');
-  await concatAudiosComGaps(audios, gaps, narracaoFull);
+  await concatenarAudiosComGaps(audios, gaps, narracaoFull);
 
   const projectRoot = HTML_VIDEO_ROOT;
   const engines = new EngineRegistry();
@@ -226,8 +244,11 @@ async function main() {
 
   const nodes = [];
   const edges = [];
-  
+
   let prevId = null;
+  const offset = 1; // índice 0 = introdução do questionário
+
+  nodes.push({ id: 'intro-questionario', kind: 'text', label: 'Início do questionário', durationSec: audios[0].durationSec + gaps[0] });
 
   for (let i = 0; i < questionario.perguntas.length; i++) {
     const q = questionario.perguntas[i];
@@ -236,8 +257,8 @@ async function main() {
     const pId = `${prefix}-pergunta`;
     const rId = `${prefix}-resposta`;
 
-    const durP = audios[i * 2].durationSec + TIMER_GAP_SEC;
-    const durR = audios[i * 2 + 1].durationSec + gaps[i * 2 + 1];
+    const durP = audios[offset + i * 2].durationSec + TIMER_GAP_SEC;
+    const durR = audios[offset + i * 2 + 1].durationSec + gaps[offset + i * 2 + 1];
 
     nodes.push({ id: pId, kind: 'text', label: `P${i+1}`, durationSec: durP });
     nodes.push({ id: rId, kind: 'text', label: `R${i+1}`, durationSec: durR });
@@ -260,21 +281,37 @@ async function main() {
   if (existsSync(bgOriginal)) {
     await copyFile(bgOriginal, bgDest);
   }
+  const bgName = existsSync(bgOriginal) ? 'bg-quiz.png' : '';
+
+  await orchestrator.writeFrameHtml(project.id, 'intro-questionario', gerarFrameIntroQuestionario(bgName));
 
   for (let i = 0; i < questionario.perguntas.length; i++) {
     const q = questionario.perguntas[i];
     const prefix = `q${String(i + 1).padStart(2, '0')}`;
     
-    const bgName = existsSync(bgOriginal) ? 'bg-quiz.png' : '';
-    const durP = audios[i * 2].durationSec; // narração da pergunta — a contagem começa quando ela termina
+    const durP = audios[offset + i * 2].durationSec; // narração da pergunta — a contagem começa quando ela termina
     
     await orchestrator.writeFrameHtml(project.id, `${prefix}-pergunta`, gerarFrameQuestao(q, bgName, false, durP));
     await orchestrator.writeFrameHtml(project.id, `${prefix}-resposta`, gerarFrameQuestao(q, bgName, true));
   }
 
-  const proj = await orchestrator.addFileAsset(project.id, narracaoFull, 'Narração Completa Quiz');
-  const asset = proj.assets[proj.assets.length - 1];
-  proj.soundtrack = { narrationAssetId: asset.id, narrationVolumeDb: 0 };
+  const assetsProjeto = [];
+  let proj = await orchestrator.addFileAsset(project.id, narracaoFull, 'Narração Completa Quiz');
+  assetsProjeto.push(proj.assets[proj.assets.length - 1]);
+  if (MUSICA_FUNDO && existsSync(MUSICA_FUNDO)) {
+    console.error(`  música de fundo: ${MUSICA_FUNDO} (${MUSICA_VOLUME_DB} dB, fade in ${MUSICA_FADE_IN_SEC}s)`);
+    proj = await orchestrator.addFileAsset(project.id, MUSICA_FUNDO, 'Música de fundo quiz');
+    assetsProjeto.push(proj.assets[proj.assets.length - 1]);
+  }
+  proj.soundtrack = {
+    narrationAssetId: assetsProjeto[0].id,
+    narrationVolumeDb: 0,
+  };
+  if (assetsProjeto.length > 1) {
+    proj.soundtrack.musicAssetId = assetsProjeto[1].id;
+    proj.soundtrack.musicVolumeDb = MUSICA_VOLUME_DB;
+    proj.soundtrack.fadeInSec = MUSICA_FADE_IN_SEC;
+  }
   await projects.save(proj);
 
   console.error('  renderizando quiz (Chromium + ffmpeg) ...');

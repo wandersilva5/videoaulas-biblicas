@@ -272,6 +272,36 @@ async function artefatos(slug) {
     .sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
   const ultimoQuiz = videosQuiz[0] ?? null;
 
+  const questionarioPath = join(outDir, 'questionario.json');
+  const perguntasQuiz = await (async () => {
+    if (!existsSync(questionarioPath)) return [];
+    try {
+      const q = JSON.parse(await readFile(questionarioPath, 'utf8'));
+      return (q.perguntas || []).map((p, i) => {
+        const prefix = `q${String(i + 1).padStart(2, '0')}`;
+        const audioP = join(outDir, `${prefix}-pergunta-narracao.mp3`);
+        const audioR = join(outDir, `${prefix}-resposta-narracao.mp3`);
+        return {
+          id: p.id,
+          numero: i + 1,
+          tema: p.tema,
+          pergunta_audio: {
+            id: `${prefix}-pergunta`,
+            existe: existsSync(audioP),
+            mtime: mtimeDe(audioP),
+          },
+          resposta_audio: {
+            id: `${prefix}-resposta`,
+            existe: existsSync(audioR),
+            mtime: mtimeDe(audioR),
+          },
+        };
+      });
+    } catch {
+      return [];
+    }
+  })();
+
   const pdfPath = join(PDFS_DIR, `${slug}-estudo.pdf`);
   return {
     slug,
@@ -291,6 +321,7 @@ async function artefatos(slug) {
       mtime: ultimoQuiz?.mtime ?? null,
       tamanho: ultimoQuiz?.tamanho ?? 0,
       arquivo: ultimoQuiz?.arquivo ?? null,
+      perguntas: perguntasQuiz,
     },
     pdf: {
       existe: existsSync(pdfPath),
@@ -886,6 +917,83 @@ const server = createServer(async (req, res) => {
         return json(res, statusDeErroJob(e), { erro: e.message });
       }
       return json(res, 200, { ok: true });
+    }
+
+    // --- Questionário: remontar vídeo com os áudios atuais (sem regenerar perguntas/narração) ---
+    if (recurso === 'video-questionario' && req.method === 'POST') {
+      const body = await lerBody(req);
+      const questionarioPath = join(OUTPUT_DIR, slug, 'questionario.json');
+      if (!existsSync(questionarioPath)) {
+        return json(res, 400, { erro: 'Questionário não existe. Gere-o primeiro.' });
+      }
+      const st = await artefatos(slug);
+      const faltando = (st.questionario?.perguntas || [])
+        .filter((p) => !p.pergunta_audio.existe || !p.resposta_audio.existe)
+        .map((p) => `Pergunta ${p.numero}`);
+      if (faltando.length) {
+        return json(res, 400, { erro: `Faltam áudios das ${faltando.join(', ')}. Regene-os antes de remontar o vídeo.` });
+      }
+      const env = {
+        VIDEO_FPS: String(body.fps ?? 24),
+        VIDEO_WIDTH: String(body.width ?? 1920),
+        VIDEO_HEIGHT: String(body.height ?? 1080),
+      };
+      try {
+        await runJob({ etapa: 'questionario', args: [join(SCRIPTS_DIR, 'montar_video_questionario.mjs'), roteiroPath], env });
+      } catch (e) {
+        return json(res, statusDeErroJob(e), { erro: e.message });
+      }
+      const arquivo = `${slug}-questionario-${String(body.width ?? 1920)}x${String(body.height ?? 1080)}.mp4`;
+      return json(res, 200, { ok: true, output_path: arquivo, url: `/media/${slug}/${arquivo}` });
+    }
+
+    // --- Questionário: regenerar áudios (um item ou todos) ---
+    if (recurso === 'narracao-questionario' && req.method === 'POST') {
+      const body = await lerBody(req);
+      const questionarioPath = join(OUTPUT_DIR, slug, 'questionario.json');
+      if (!existsSync(questionarioPath)) {
+        return json(res, 400, { erro: 'Questionário não existe. Gere-o primeiro.' });
+      }
+      const args = [join(SCRIPTS_DIR, 'gerar_narracao_questionario.mjs'), roteiroPath];
+      if (body.itemId) args.push('--apenas', body.itemId);
+      else if (body.todos) args.push('--todos');
+      if (body.variar) args.push('--variar');
+      try {
+        await runJob({ etapa: 'narracao-questionario', args });
+      } catch (e) {
+        return json(res, statusDeErroJob(e), { erro: e.message });
+      }
+      return json(res, 200, { ok: true });
+    }
+
+    // --- Questionário: apagar áudios (um item ou todos) ---
+    if (recurso === 'narracao-questionario' && req.method === 'DELETE') {
+      const body = await lerBody(req);
+      const questionarioPath = join(OUTPUT_DIR, slug, 'questionario.json');
+      if (!existsSync(questionarioPath)) {
+        return json(res, 400, { erro: 'Questionário não existe.' });
+      }
+      const outDir = join(OUTPUT_DIR, slug);
+      const alvos = [];
+      if (body.itemId) {
+        const m = /^q(\d+)-(pergunta|resposta)$/i.exec(String(body.itemId));
+        if (!m) return json(res, 400, { erro: `Item "${body.itemId}" inválido (use q1-pergunta ou q1-resposta)` });
+        alvos.push(`q${String(Number(m[1])).padStart(2, '0')}-${m[2]}`);
+      } else {
+        const q = JSON.parse(await readFile(questionarioPath, 'utf8'));
+        for (let i = 0; i < (q.perguntas || []).length; i++) {
+          const prefix = `q${String(i + 1).padStart(2, '0')}`;
+          alvos.push(`${prefix}-pergunta`, `${prefix}-resposta`);
+        }
+      }
+      let removidos = 0;
+      for (const id of alvos) {
+        const mp3 = join(outDir, `${id}-narracao.mp3`);
+        const tmp = join(outDir, `${id}-narracao.tmp.wav`);
+        if (existsSync(mp3)) { await unlink(mp3); removidos++; }
+        if (existsSync(tmp)) await unlink(tmp);
+      }
+      return json(res, 200, { ok: true, removidos });
     }
 
     return json(res, 404, { erro: 'Rota não encontrada' });

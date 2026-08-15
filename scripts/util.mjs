@@ -4,6 +4,7 @@
 import { createHash } from 'node:crypto';
 import { readdir, stat, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { join, basename, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -35,17 +36,21 @@ export function qwenEnv(env = process.env) {
     QWEN_MODEL: env.QWEN_MODEL || 'model-base',
     QWEN_REF: env.QWEN_REF || join(ROOT, 'voz-base', 'vander-24k.wav'),
     QWEN_REF_START: env.QWEN_REF_START || '0',
-    QWEN_REF_END: env.QWEN_REF_END || '7.2',
+    QWEN_REF_END: env.QWEN_REF_END || '46.5',
     QWEN_REF_TEXTO:
       env.QWEN_REF_TEXTO ||
-      'Bem-vindos a mais uma videoaula. Hoje vamos estudar a Palavra de Deus com atenção e fé.',
+      'Olá, meus queridos amigos! Sejam bem-vindos a mais uma videoaula de teologia. Hoje vamos refletir sobre a verdade de Deus, que permanece firme em todas as gerações. Você já parou para pensar no tamanho do seu amor? Prestem atenção, porque cada versículo traz ensinamentos preciosos: sobre o perdão, sobre a fé e sobre a esperança que renova o nosso coração. Quando a vida fica difícil, lembre-se de que Deus nunca nos abandona, e que a fé nos dá forças para recomeçar. Que a paz do Senhor encha os seus dias, agora e para sempre. Amém!',
     QWEN_MAX_STEPS: env.QWEN_MAX_STEPS || '600',
-    // Temperatura maior no estágio Talker = mais variação emocional/entonação (voz menos monótona).
-    // Repeat penalty maior = mais variação de tom (menos "leitura cadenciada").
-    QWEN_TEMP: env.QWEN_TEMP || '1.2',
+    // Amostragem mais enxuta no estágio semântico (talker) = o modelo segue melhor
+    // o texto (menos paráfrase/variacão de frase) sem virar leitura mecânica.
+    //   - Temp menor (0.8->0.5): decodifica mais próximo do texto.
+    //   - Top-P/Top-K menores (1.0/50 -> 0.9/30): menos espaço de amostragem.
+    //   - Repeat penalty maior (1.4): variação de tom (evita "leitura cadenciada" robótica).
+    //   - Sub-temp (acústica) mantida em 0.6: voz natural, sem eletrismo.
+    QWEN_TEMP: env.QWEN_TEMP || '0.5',
     QWEN_SUB_TEMP: env.QWEN_SUB_TEMP || '0.6',
-    QWEN_TOP_P: env.QWEN_TOP_P || '1.0',
-    QWEN_TOP_K: env.QWEN_TOP_K || '50',
+    QWEN_TOP_P: env.QWEN_TOP_P || '0.9',
+    QWEN_TOP_K: env.QWEN_TOP_K || '30',
     QWEN_MIN_P: env.QWEN_MIN_P || '0.05',
     QWEN_REPEAT_PENALTY: env.QWEN_REPEAT_PENALTY || '1.4',
     // Seeds vazios = derivados do hash do texto no bridge (cada slide varia, mas é
@@ -88,6 +93,15 @@ export function prefixoNarracao(index, total) {
   if (index === 0) return '00-intro';
   if (index === total - 1) return `${String(total - 1).padStart(2, '0')}-conclusao`;
   return String(index).padStart(2, '0');
+}
+
+/** Narração de abertura do questionário — sempre gerada na criação do quiz e incluída no vídeo. */
+export const TEXTO_INTRO_QUESTIONARIO = 'Agora vamos ao nosso questionário sobre o que aprendemos!';
+export const PREFIX_INTRO_QUESTIONARIO = '00-intro-questionario';
+
+/** Caminho da música de fundo (env `MUSICA_FUNDO` ou `<repo>/musica/fundo.mp3`). */
+export function musicaFundo(env = process.env) {
+  return env.MUSICA_FUNDO || join(dirname(fileURLToPath(import.meta.url)), '..', 'musica', 'fundo.mp3');
 }
 
 /** Prompt da imagem de capa (abertura) — do roteiro ou derivado se ausente (roteiros antigos). */
@@ -207,6 +221,86 @@ export function extrairJson(content) {
   throw new Error('Resposta do modelo não contém JSON válido. Resposta: ' + puro.slice(0, 400));
 }
 
+/** Ordinal por extenso dos livros bíblicos numerados (1 Coríntios → Primeira Coríntios). */
+const ORDINAIS_LIVROS = { '1': 'Primeira', '2': 'Segunda', '3': 'Terceira' };
+const LIVROS_COM_NUMERAL = [
+  'Samuel', 'Reis', 'Crônicas', 'Coríntios', 'Tessalonicenses', 'Timóteo', 'Pedro', 'João',
+];
+const LIVROS_SEM_NUMERAL = [
+  'Gênesis', 'Êxodo', 'Levítico', 'Números', 'Deuteronômio', 'Josué', 'Juízes', 'Rute', 'Esdras',
+  'Neemias', 'Ester', 'Jó', 'Salmo', 'Salmos', 'Provérbios', 'Eclesiastes', 'Cantares', 'Cânticos', 'Isaías',
+  'Jeremias', 'Lamentações', 'Ezequiel', 'Daniel', 'Oséias', 'Joel', 'Amós', 'Obadias', 'Jonas',
+  'Miquéias', 'Naum', 'Habacuque', 'Sofonias', 'Ageu', 'Zacarias', 'Malaquias', 'Mateus', 'Marcos',
+  'Lucas', 'João', 'Atos', 'Romanos', 'Gálatas', 'Efésios', 'Filipenses', 'Colossenses', 'Tito',
+  'Filemom', 'Hebreus', 'Tiago', 'Judas', 'Apocalipse',
+];
+
+/** Converte número cardinal (1–999) para texto por extenso em pt-BR. */
+function numeroPorExtenso(n) {
+  const u = ['zero', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove', 'dez', 'onze', 'doze', 'treze', 'catorze', 'quinze', 'dezesseis', 'dezessete', 'dezoito', 'dezenove'];
+  const d = ['', '', 'vinte', 'trinta', 'quarenta', 'cinquenta', 'sessenta', 'setenta', 'oitenta', 'noventa'];
+  const c = ['', 'cento', 'duzentos', 'trezentos', 'quatrocentos', 'quinhentos', 'seiscentos', 'setecentos', 'oitocentos', 'novecentos'];
+  if (n < 20) return u[n];
+  if (n < 100) {
+    const dez = Math.floor(n / 10);
+    const um = n % 10;
+    return d[dez] + (um ? ` e ${u[um]}` : '');
+  }
+  if (n === 100) return 'cem';
+  const cen = Math.floor(n / 100);
+  const resto = n % 100;
+  return c[cen] + (resto ? ` e ${numeroPorExtenso(resto)}` : '');
+}
+
+/**
+ * Monta a referência por extenso para leitura (TTS):
+ *  - versículo único: "Livro capítulo N e versículo M" (ex.: "João capítulo três e versículo dezesseis")
+ *  - intervalo: "Livro capítulo N, versículos do M a Z" (ex.: "Primeira Pedro capítulo um, versículos do um a seis")
+ */
+function montarRefPorExtenso(prefixoLivro, cap, ver, ver2) {
+  const capT = numeroPorExtenso(Number(cap));
+  const verT = numeroPorExtenso(Number(ver));
+  if (ver2) {
+    return `${prefixoLivro} capítulo ${capT}, versículos do ${verT} a ${numeroPorExtenso(Number(ver2))}`;
+  }
+  return `${prefixoLivro} capítulo ${capT} e versículo ${verT}`;
+}
+
+/**
+ * Reescreve referências bíblicas em texto NARRADO (lido pelo TTS) para a forma
+ * totalmente falada: livro numerado vira ordinal por extenso ("1 Coríntios" →
+ * "Primeira Coríntios") e capítulo/versículo ficam por extenso
+ * ("João 3:16" → "João capítulo três e versículo dezesseis";
+ * "1 Pedro 1:1-6" → "Primeira Pedro capítulo um, versículos do um a seis").
+ * Aceita como entrada tanto "Livro cap:vers" quanto o já normalizado "Livro cap, vers".
+ * Só deve ser aplicada nos campos narrados (introducao/narracao/conclusao),
+ * NUNCA no campo "referencia_biblica", que mantém o formato padrão.
+ */
+export function referenciasPorExtenso(texto) {
+  let t = String(texto ?? '');
+  const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const numRe = LIVROS_COM_NUMERAL.map(escRe).join('|');
+  const semRe = LIVROS_SEM_NUMERAL.map(escRe).join('|');
+  const versEIntervalo = '(\\d+)\\s*[,:]\\s*(\\d+)(?:\\s*[-–—]\\s*(\\d+))?';
+
+  // Livro com numeral arábico: "1 Timóteo 3:16" ou "1Coríntios 15:3" (também aceita vírgula).
+  t = t.replace(
+    new RegExp(`\\b([123])\\s*(${numRe})\\s+${versEIntervalo}`, 'gi'),
+    (m, num, livro, cap, ver, ver2) => montarRefPorExtenso(`${ORDINAIS_LIVROS[num]} ${livro}`, cap, ver, ver2),
+  );
+  // Livro com ordinal já por extenso (formato antigo): "Primeira Timóteo 3, 16".
+  t = t.replace(
+    new RegExp(`\\b(Primeira|Segunda|Terceira)\\s+(${numRe})\\s+${versEIntervalo}`, 'gi'),
+    (m, ord, livro, cap, ver, ver2) => montarRefPorExtenso(`${ord} ${livro}`, cap, ver, ver2),
+  );
+  // Livros sem numeral: "João 3:16" ou "Gênesis 17, 1".
+  t = t.replace(
+    new RegExp(`\\b(${semRe})\\s+${versEIntervalo}`, 'gi'),
+    (m, livro, cap, ver, ver2) => montarRefPorExtenso(livro, cap, ver, ver2),
+  );
+  return t;
+}
+
 /** Hash SHA-1 do texto/prompt — usado no manifesto para detectar itens desatualizados. */
 export const hashDe = (t) => createHash('sha1').update(t ?? '').digest('hex');
 
@@ -233,6 +327,42 @@ export function truncarMaterial(texto, max) {
 
 /** Limite padrão de caracteres do material de apoio enviado ao llama (default seguro p/ n_ctx=8192). */
 export const MATERIAL_MAX_CHARS = Number(process.env.MATERIAL_MAX_CHARS) || 12000;
+
+/**
+ * Concatena arquivos de áudio com intervalos de silêncio entre eles (ffmpeg).
+ * `gaps[i]` é o silêncio (s) inserido APÓS `audios[i]`; o último é ignorado.
+ * Usado pelo questionário (pergunta + 10 s de timer + resposta) e pela
+ * geração segmentada de narração (cada opção vira um MP3, concat com pausa).
+ */
+export function concatenarAudiosComGaps(audios, gaps, outPath) {
+  const args = ['-y'];
+  const n = audios.length;
+  const filters = [];
+  const labels = [];
+  for (let i = 0; i < n; i++) {
+    args.push('-i', audios[i].path);
+    filters.push(`[${i}:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`);
+    labels.push(`[a${i}]`);
+
+    if (i < n - 1 && gaps[i] > 0) {
+      filters.push(`anullsrc=r=44100:cl=stereo:d=${gaps[i]}[pad${i}]`);
+      labels.push(`[pad${i}]`);
+    }
+  }
+  filters.push(`${labels.join('')}concat=n=${labels.length}:v=0:a=1[out]`);
+  args.push('-filter_complex', filters.join(';'), '-map', '[out]', '-c:a', 'libmp3lame', '-b:a', '192k', outPath);
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    proc.stderr.on('data', (d) => (stderr += d.toString()));
+    proc.on('error', reject);
+    proc.on('exit', (code) => {
+      if (code === 0) resolve(outPath);
+      else reject(new Error(`ffmpeg concat audio exit ${code}: ${stderr.slice(-1000)}`));
+    });
+  });
+}
 
 /** Mapa de extensão → Content-Type para servir arquivos. */
 export const MIME = {

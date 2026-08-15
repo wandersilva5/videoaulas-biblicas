@@ -16,6 +16,14 @@ const QWEN = qwenEnv();
 
 const ORDINAIS_LIVROS = { '1': 'Primeira', '2': 'Segunda', '3': 'Terceira' };
 
+/** Palavras com leitura corrigida (chave = forma exata no texto, valor = forma com tônica marcada). */
+const PRONUNCIAS = {
+  Escrituras: 'Escritúras',
+  escrituras: 'escritúras',
+  Escritura: 'Escritúra',
+  escritura: 'escritúra',
+};
+
 const UNIDADES = ['', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove'];
 const DEZ_A_DEZENOVE = ['dez', 'onze', 'doze', 'treze', 'quatorze', 'quinze', 'dezesseis', 'dezessete', 'dezoito', 'dezenove'];
 const DEZENAS = ['', '', 'vinte', 'trinta', 'quarenta', 'cinquenta', 'sessenta', 'setenta', 'oitenta', 'noventa'];
@@ -76,7 +84,26 @@ export function normalizarReferenciasParaTts(texto) {
   );
   // Qualquer número inteiro restante -> por extenso
   t = t.replace(/\b\d{1,6}\b/g, (m) => numeroPorExtenso(m));
+  // Correções de pronúncia (palavras que o clone de voz estressa errado).
+  // Acento agudo na sílaba tônica força a leitura correta ("Escritúras" em vez de "éscrituras").
+  for (const [de, para] of Object.entries(PRONUNCIAS)) {
+    t = t.replaceAll(de, para);
+  }
   return t;
+}
+
+/** Destrói os streams do processo filho após o exit — fecha os pipes e libera o
+ * event loop do Node. Sem isso, subprocessos do TTS (decoder/speaker do Qwen) que
+ * herdam os FDs do pipe mantêm o processo da pipeline "vivo" mesmo após terminar,
+ * e o servidor fica com o job preso até o cancelamento. */
+function fecharStreams(proc) {
+  for (const s of [proc.stdin, proc.stdout, proc.stderr]) {
+    try {
+      s?.destroy();
+    } catch {
+      /* já fechado */
+    }
+  }
 }
 
 function tts(texto, outPath) {
@@ -89,6 +116,7 @@ function tts(texto, outPath) {
     proc.stderr.on('data', (d) => (err += d.toString()));
     proc.on('error', reject);
     proc.on('exit', async (code) => {
+      fecharStreams(proc);
       if (code !== 0) reject(new Error(`edge-tts exit ${code}: ${err.slice(0, 300)}`));
       else {
         try {
@@ -113,7 +141,10 @@ function finalizarAudio(tmp, outMp3) {
     let ferr = '';
     ff.stderr.on('data', (d) => (ferr += d.toString()));
     ff.on('error', reject);
-    ff.on('exit', (c) => (c === 0 ? resolve() : reject(new Error(`ffmpeg exit ${c}: ${ferr.slice(0, 300)}`))));
+    ff.on('exit', (c) => {
+      fecharStreams(ff);
+      c === 0 ? resolve() : reject(new Error(`ffmpeg exit ${c}: ${ferr.slice(0, 300)}`));
+    });
   });
 }
 
@@ -142,8 +173,11 @@ function ttsQwen(texto, outMp3) {
       QWEN_TOP_K: QWEN.QWEN_TOP_K,
       QWEN_MIN_P: QWEN.QWEN_MIN_P,
       QWEN_REPEAT_PENALTY: QWEN.QWEN_REPEAT_PENALTY,
-      QWEN_SEED: QWEN.QWEN_SEED,
-      QWEN_SUB_SEED: QWEN.QWEN_SUB_SEED,
+      // Seeds dinâmicos: respeita QWEN_SEED/QWEN_SUB_SEED definidos em process.env
+      // em tempo de execução (permite regenerar com seed novo p/ variar pronúncia);
+      // senão usa os defaults capturados no load (vazios = derivados do hash do texto).
+      QWEN_SEED: process.env.QWEN_SEED || QWEN.QWEN_SEED,
+      QWEN_SUB_SEED: process.env.QWEN_SUB_SEED || QWEN.QWEN_SUB_SEED,
       QWEN_ZERO_SHOT: QWEN.QWEN_ZERO_SHOT,
       QWEN_ONNX_PROVIDER: QWEN.QWEN_ONNX_PROVIDER,
     };
@@ -153,6 +187,7 @@ function ttsQwen(texto, outMp3) {
     proc.stderr.on('data', (d) => (log += d.toString()));
     proc.on('error', reject);
     proc.on('exit', async (code) => {
+      fecharStreams(proc);
       try {
         if (code !== 0) throw new Error(`qwen bridge exit ${code}: ${log.slice(0, 500)}`);
         await finalizarAudio(wavTmp, outMp3);

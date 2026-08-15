@@ -10,7 +10,7 @@ const COMFY_OUTPUT_DIR = process.env.COMFY_OUTPUT_DIR || 'D:\\ComfyUI_windows_po
 const ANIMA_UNET = process.env.ANIMA_UNET || 'anima\\animeStudio_v4Anima.safetensors';
 const ANIMA_CLIP = process.env.ANIMA_CLIP || 'qwen\\qwen_3_06b_base.safetensors';
 const ANIMA_VAE = process.env.ANIMA_VAE || 'qwen_image_vae.safetensors';
-const ANIMA_LORA = process.env.ANIMA_LORA || 'Anima\\minimalistflat-000006.safetensors';
+const ANIMA_LORA = process.env.ANIMA_LORA || 'Anima\\anima_style_slay_the_spire_v2-000018.safetensors';
 const SEED_BASE = process.env.KREA2_SEED_BASE !== undefined && process.env.KREA2_SEED_BASE !== '' ? Number(process.env.KREA2_SEED_BASE) : 1000;
 
 // Replica o workflow "Anima-simples.json" do usuário:

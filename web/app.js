@@ -692,12 +692,38 @@ function renderEtapa6(el) {
       </div>`
     : '<p class="msg-progresso" style="color:var(--alerta)">Vídeo do questionário ainda não gerado.</p>';
 
+  const perguntas = (quiz?.perguntas || []);
+  const audiosHtml = perguntas.map((p) => {
+    const playerAudio = (a, rotulo) => {
+      const prefix = a.id;
+      const download = a.existe
+        ? `<a class="btn btn-mini" href="/media/${estado.slug}/${prefix}-narracao.mp3" download title="Baixar MP3">⬇</a>`
+        : '';
+      return `<div class="item-audio">
+        <span class="rotulo">${rotulo}</span>
+        ${a.existe ? `<audio controls preload="none" src="/media/${estado.slug}/${prefix}-narracao.mp3"></audio>` : '<span class="msg-progresso">sem áudio ainda</span>'}
+        ${download}
+        <button class="btn btn-mini regen" data-action="regen-narracao-quiz" data-item="${prefix}" title="Regenera com novo seed de voz (tenta corrigir pronúncia)">↻ regenerar</button>
+        ${a.existe ? `<button class="btn btn-mini btn-perigo" data-action="del-narracao-quiz" data-item="${prefix}" title="Apagar este MP3">🗑</button>` : ''}
+      </div>`;
+    };
+    return `<div class="cartao" style="margin-top:10px; padding:14px 18px;">
+      <strong style="color:var(--dourado)">${p.numero}. ${esc(p.tema)}</strong>
+      ${playerAudio(p.pergunta_audio, 'Pergunta')}
+      ${playerAudio(p.resposta_audio, 'Resposta')}
+    </div>`;
+  }).join('');
+
   el.innerHTML = `
     <div class="etapa-topo">
       <h3>Vídeo de Questionário</h3>
-      <button class="btn btn-primario" data-action="gerar-questionario">🧠 Gerar vídeo de questionário</button>
+      <div class="etapa-acoes">
+        <button class="btn" data-action="regenerar-todas-narracao-quiz" title="Regenera todos os MP3 do questionário, mesmo os já existentes">🎙 Regenerar todos os áudios</button>
+        <button class="btn" data-action="remontar-questionario" title="Monta o vídeo de novo com os áudios atuais, sem regenerar perguntas nem narração">🎬 Remontar vídeo</button>
+        <button class="btn btn-primario" data-action="gerar-questionario">🧠 Gerar vídeo de questionário</button>
+      </div>
     </div>
-    <p class="msg-progresso">O modelo formula <strong>5 perguntas de múltipla escolha</strong> com base no conteúdo da aula. Cada pergunta tem <strong>10 segundos</strong> para o espectador responder antes de a resposta correta ser revelada e narrada. Este vídeo é separado da videoaula principal.</p>
+    <p class="msg-progresso">O modelo formula <strong>5 perguntas de múltipla escolha</strong> com base no conteúdo da aula. Cada pergunta tem <strong>10 segundos</strong> para o espectador responder antes de a resposta correta ser revelada e narrada. Este vídeo é separado da videoaula principal. Use <strong>🎬 Remontar vídeo</strong> depois de regenerar algum áudio.</p>
     <div class="cartao" style="padding: 16px 20px; background: rgba(224,180,90,0.07); border-color: rgba(224,180,90,0.3);">
       <strong style="color: var(--dourado)">Formato do vídeo:</strong>
       <ul style="margin-top: 8px; padding-left: 20px; color: var(--texto-2); font-size: 14px; line-height: 1.8;">
@@ -708,7 +734,10 @@ function renderEtapa6(el) {
         <li>Após o timer, a opção correta é destacada e narrada</li>
       </ul>
     </div>
-    ${videoHtml}`;
+    ${videoHtml}
+    ${perguntas.length ? `<h4 style="margin-top:18px; color:var(--dourado)">Áudios do questionário</h4>
+      <p class="msg-progresso">Se alguma pronúncia não ficou boa, use "↻ regenerar" para refazer só aquele áudio (novo seed de voz). Depois monte o vídeo de novo.</p>
+      ${audiosHtml}` : ''}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -923,6 +952,41 @@ $('#etapa-container').addEventListener('click', async (ev) => {
     return rodarJob(
       api(`/api/questionario/${estado.slug}`, { method: 'POST' }),
       'Vídeo de questionário gerado com sucesso!',
+    );
+  }
+  if (acao === 'remontar-questionario') {
+    if (estado.servicos && (!servicoOk('ffmpeg') || !servicoOk('ffprobe') || !servicoOk('chromium'))) {
+      return toast('Falta ffmpeg/ffprobe ou Chromium — não é possível montar o vídeo.', true);
+    }
+    if (!confirm('Remontar o vídeo do questionário com os áudios atuais? As perguntas e narrações não serão regeneradas.')) return;
+    return rodarJob(
+      api(`/api/video-questionario/${estado.slug}`, { method: 'POST' }),
+      'Vídeo do questionário remontado!',
+    );
+  }
+  if (acao === 'regen-narracao-quiz' || acao === 'regenerar-todas-narracao-quiz') {
+    if (estado.servicos && !servicoOk('qwen')) return toast('Qwen3-TTS indisponível — não é possível gerar narração.', true);
+    const itemId = btn.dataset.item;
+    if (!itemId && acao === 'regenerar-todas-narracao-quiz') {
+      if (!confirm('Regenerar TODOS os áudios do questionário (pergunta + resposta de cada)? Custa tempo de TTS.')) return;
+      return rodarJob(
+        api(`/api/narracao-questionario/${estado.slug}`, { method: 'POST', body: JSON.stringify({ todos: true, variar: true }) }),
+        'Todos os áudios do questionário foram regenerados.',
+      );
+    }
+    if (acao === 'regen-narracao-quiz') {
+      return rodarJob(
+        api(`/api/narracao-questionario/${estado.slug}`, { method: 'POST', body: JSON.stringify({ itemId, variar: true }) }),
+        `Áudio ${itemId} regenerado.`,
+      );
+    }
+  }
+  if (acao === 'del-narracao-quiz') {
+    const itemId = btn.dataset.item;
+    if (!confirm(`Apagar o áudio ${itemId}?`)) return;
+    return rodarJob(
+      api(`/api/narracao-questionario/${estado.slug}`, { method: 'DELETE', body: JSON.stringify({ itemId }) }),
+      'Áudio apagado.',
     );
   }
 });
