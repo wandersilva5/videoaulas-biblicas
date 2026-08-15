@@ -304,6 +304,60 @@ export function referenciasPorExtenso(texto) {
 /** Hash SHA-1 do texto/prompt — usado no manifesto para detectar itens desatualizados. */
 export const hashDe = (t) => createHash('sha1').update(t ?? '').digest('hex');
 
+/**
+ * Remove menções a texto legível/letras/acentos de um prompt de imagem de slide.
+ * O modelo de imagem erra acentos e palavras curtas ("Fé" vira "Fee"), então o
+ * prompt é pós-processado para que a cena valha por si só, sem texto na imagem.
+ *
+ * Estratégia: remove o prefixo "Prompt:", remove qualquer trecho entre aspas e
+ * remove SENTENÇAS INTEIRAS que mencionem texto (escrito, palavras, título,
+ * frase, citação, versículo, lousa, placa, legenda, etc.) — em vez de picotar
+ * trechos com regex, o que deixava fragmentos quebrados no prompt.
+ */
+const MARCAS_TEXTO_IMAGEM = [
+  'written', 'inscribed', 'printed', 'typed', 'lettering', 'lettered',
+  'phrase', 'quote', 'quotation', 'caption', 'label', 'heading', 'headline',
+  'chalkboard', 'blackboard', 'whiteboard', 'signboard', 'billboard',
+  'speech bubble', 'speech-bubble', 'thought bubble', 'says', 'saying',
+  'the text', 'with text', 'text on', 'text reads', 'text in',
+  'the word', 'the words', 'with the word', 'with the words', 'word in',
+  'scroll reading', 'scroll titled', 'scroll with', 'a scroll that',
+  'book titled', 'book with', 'titled',
+  'scripture', 'biblical verse', 'verse ', 'bible quote', 'biblical quote',
+  'reads', 'displaying', 'proclaiming', 'engraved', 'embossed', 'etched',
+];
+
+const RE_ASPAS = /["“”'‘’][^"“”'‘’]*["“”'‘’]/g;
+
+export function limparTextoDePromptImagem(prompt) {
+  let p = String(prompt ?? '').replace(/^Prompt:\s*/i, '').trim();
+
+  // 1. Remove trechos entre aspas (deixando eventuais conectivos simples).
+  p = p.replace(RE_ASPAS, '');
+
+  // 2. Remove sentenças inteiras que citem marcadores de texto.
+  const temMarca = (sent) => {
+    const s = sent.toLowerCase();
+    return MARCAS_TEXTO_IMAGEM.some((m) => s.includes(m));
+  };
+  const sentencas = p.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+  p = sentencas.filter((s) => !temMarca(s)).join(' ');
+
+  // 3. Limpeza de fragmentos órfãos deixados pelos passos anteriores.
+  p = p
+    .replace(/\s*,\s*\./g, '.')
+    .replace(/\s+([,.;])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/,\s*,/g, ',')
+    .replace(/,\s+\./g, '.')
+    .trim();
+  // Remove pontuação dupla ".," etc. e vírgulas/pontos soltos no fim.
+  p = p.replace(/([,.]\s*){2,}/g, '. ').replace(/[,.]+$/g, '').trim();
+  // Remove espaços órfãos antes de "and"/"the"/conectivos no fim de trechos cortados.
+  p = p.replace(/\b(and|with|of|in|on|a|the)\s+$/gi, '').replace(/\s{2,}/g, ' ').trim();
+  return p;
+}
+
 /** Escapa texto para HTML (atributos/innerHTML). */
 export const esc = (s) =>
   String(s ?? '')

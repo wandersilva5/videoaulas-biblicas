@@ -3,7 +3,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { request as httpRequest } from 'node:http';
-import { slugDe, modeloLLama, truncarMaterial, referenciasPorExtenso, MATERIAL_MAX_CHARS } from './util.mjs';
+import { slugDe, modeloLLama, truncarMaterial, referenciasPorExtenso, limparTextoDePromptImagem, MATERIAL_MAX_CHARS } from './util.mjs';
 
 const LLAMA_URL = process.env.LLAMA_URL || 'http://127.0.0.1:8091';
 
@@ -55,7 +55,7 @@ Gere SEMPRE um JSON válido, sem markdown, sem texto extra, com esta estrutura e
       "pontos": ["ponto 1 curto", "ponto 2 curto", "ponto 3 curto"],
       "narracao": "Texto de 60-90 palavras narrado, explicando o slide de forma didática e fluida, como se estivesse apresentando, citando a referência bíblica",
       "referencia_biblica": "Livro capítulo:versículo (ex.: João 3:16)",
-      "imagem_prompt": "Prompt de imagem em inglês que descreve a CENA ESPECÍFICA deste slide (baseada no título e nos pontos). Ex.: se o slide fala do argumento de Platão, descreva uma cena de filósofo grego numa ágora; se fala da doutrina, uma cena de ensino. Estilo flat illustration, clean educational diagram, cores sóbrias (azul marinho, dourado, creme). Qualquer texto que aparecer na imagem deve estar em português do Brasil (pt-BR)"
+      "imagem_prompt": "Prompt de imagem em inglês que descreve UMA CENA VISUAL concreta e específica deste slide (baseada no título e nos pontos): personagem(ens), objeto(s) e cenário em ação, de forma ilustrável pelo modelo de imagem. Ex.: se o slide fala do argumento de Platão, descreva 'a philosopher in a greek tunic sitting on stone steps, raising one hand, marble columns and amphora beside him'; se fala da doutrina, 'a teacher pointing to a scroll, students with open bibles around a wooden table'. Estilo flat illustration, clean educational diagram, cores sóbrias (azul marinho, dourado, creme). TEXTO NA IMAGEM: evite ao máximo; se houver, apenas UMA palavra curta (1-2 letras de impressão simples, SEM acentos nem cedilhas, pois o modelo de imagem erra acentos — ex.: use 'FE' e não 'Fé')"
     }
   ],
   "conclusao": "3-5 frases de encerramento narradas: comece agradecendo a audiência, feche com uma aplicação prática e outra referência bíblica, e termine convidando a apoiar o projeto — inscrever-se no canal, curtir e compartilhar o vídeo para que mais pessoas sejam abençoadas, e ler a descrição para saber como apoiar de outras formas",
@@ -71,7 +71,7 @@ REGRAS:
 - As referências devem estar corretas e fiéis ao ensino bíblico, com o estudo permanecendo educacional, cristão e edificante (fé, doutrina e prática).
 - Explicação de termos: sempre que um termo técnico ou importante aparecer (ex.: teologia, hermenêutica, exegese, escatologia, soteriologia, graça, santificação, expiação, justificação, etc.), dedique um ponto do slide para explicá-lo de forma simples, com origem etimológica quando ajudar (ex.: "Teologia vem do grego: Teo = Deus + logia = estudo, ou seja, estudo sobre Deus"). Linguagem acessível, como quem conversa com um iniciante, sem jargão acadêmico.
 - Narração legível por leitor de voz (TTS): nos campos de narração (introducao, slides, conclusao) escreva as referências bíblicas por extenso, como seriam lidas em voz alta: livro numerado vira ordinal ("1 Coríntios" → "Primeira Coríntios", "2 Timóteo" → "Segunda Timóteo") e capítulo/versículo ficam totalmente por extenso (ex.: "João capítulo três e versículo dezesseis" em vez de "João 3:16"; "Primeira Pedro capítulo um, versículos do um a seis" em vez de "1 Pedro 1:1-6"). Já o campo "referencia_biblica" deve continuar no formato padrão (ex.: "1 Timóteo 3:1").
-- imagem_prompt: CADA slide deve ter um prompt de imagem ÚNICO e específico, descrevendo a cena daquele assunto em particular (use o título e os pontos como base). NUNCA repita o mesmo prompt em dois slides nem copie o exemplo da estrutura: cada um deve retratar a cena única do tema falado naquele slide. Se houver qualquer texto na imagem, ele deve estar em português do Brasil (pt-BR) e sem erros de ortografia; idealmente minimize texto na imagem.`;
+- imagem_prompt: CADA slide deve ter um prompt ÚNICO que descreva uma CENA VISUAL concreta e ilustrável (personagens, objetos e cenário em ação), retratando a cena única do tema falado naquele slide — nunca um conceito abstrato só com palavras. NUNCA repita o mesmo prompt em dois slides nem copie o exemplo da estrutura. TEXTO NA IMAGEM: evite ao máximo — a imagem deve valer por si só; se for essencial, use no máximo UMA palavra curta SEM acentos nem cedilhas (o modelo de imagem erra acentos; ex.: 'FE' em vez de 'Fé'), em português do Brasil, e o texto deve ser secundário, nunca competir com a imagem.`;
 
 /** Texto do material de apoio (extraído de PDF) embutido no prompt do usuário. */
 function montarContentDoUsuario(topico, material, tentativa, MIN_SLIDES) {
@@ -175,7 +175,7 @@ async function regerarPromptsImagemDuplicados(roteiro) {
       {
         role: 'system',
         content:
-          'Você escreve prompts de imagem flat illustration educativa para videoaulas de teologia. Responda APENAS com um JSON válido no formato {"prompts": ["...", "..."]}, um prompt por slide, na mesma ordem da lista. Cada prompt deve descrever a CENA ESPECÍFICA do assunto daquele slide (use o título e os pontos como base), em inglês, com estilo flat illustration, clean educational diagram, cores sóbrias (azul marinho, dourado, creme). Idealmente sem texto na imagem; se houver texto, em português do Brasil. Os prompts não podem se repetir.',
+          'Você escreve prompts de imagem flat illustration educativa para videoaulas de teologia. Responda APENAS com um JSON válido no formato {"prompts": ["...", "..."]}, um prompt por slide, na mesma ordem da lista. Cada prompt deve descrever uma CENA VISUAL CONCRETA e ilustrável (personagens, objetos e cenário em ação) representando o assunto daquele slide — nunca um conceito abstrato só com palavras. Em inglês, estilo flat illustration, clean educational diagram, cores sóbrias (azul marinho, dourado, creme). TEXTO NA IMAGEM: evite ao máximo — a imagem deve valer por si só; se for essencial, use no máximo UMA palavra curta SEM acentos nem cedilhas (o modelo de imagem erra acentos; ex.: FE em vez de Fé), em português do Brasil. Os prompts não podem se repetir.',
       },
       {
         role: 'user',
@@ -183,7 +183,7 @@ async function regerarPromptsImagemDuplicados(roteiro) {
       },
     ],
     temperature: 0.8,
-    max_tokens: 4096,
+    max_tokens: 16384,
     stream: false,
   };
 
@@ -212,7 +212,7 @@ async function regerarPromptsImagemDuplicados(roteiro) {
   alvo.forEach((s, i) => {
     const novo = String(prompts[i] || '').trim();
     if (novo.length > 5) {
-      s.imagem_prompt = novo;
+      s.imagem_prompt = limparTextoDePromptImagem(novo);
       corrigidos++;
     }
   });

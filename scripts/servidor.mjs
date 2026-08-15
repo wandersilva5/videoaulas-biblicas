@@ -18,7 +18,7 @@ const DEFAULTS = {
   LLAMA_URL: 'http://127.0.0.1:8091',
   COMFY_URL: 'http://127.0.0.1:8188',
   COMFY_OUTPUT_DIR: 'D:\\ComfyUI_windows_portable\\ComfyUI\\output',
-  ANIMA_UNET: 'anima\\animeStudio_v4Anima.safetensors',
+  ANIMA_UNET: 'anima\\minijma_1.safetensors',
   ANIMA_CLIP: 'qwen\\qwen_3_06b_base.safetensors',
   ANIMA_VAE: 'qwen_image_vae.safetensors',
   ANIMA_LORA: 'Anima\\minimalistflat-000006.safetensors',

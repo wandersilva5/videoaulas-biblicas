@@ -2,20 +2,22 @@ import { readFile, mkdir, writeFile, copyFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { imagemPromptIntro, imagemPromptConclusao } from './util.mjs';
+import { imagemPromptIntro, imagemPromptConclusao, limparTextoDePromptImagem } from './util.mjs';
 
 const COMFY_URL = process.env.COMFY_URL || 'http://127.0.0.1:8188';
 const COMFY_OUTPUT_DIR = process.env.COMFY_OUTPUT_DIR || 'D:\\ComfyUI_windows_portable\\ComfyUI\\output';
 
-const ANIMA_UNET = process.env.ANIMA_UNET || 'anima\\animeStudio_v4Anima.safetensors';
+const ANIMA_UNET = process.env.ANIMA_UNET || 'anima\\anima-base-v1.0.safetensors';
 const ANIMA_CLIP = process.env.ANIMA_CLIP || 'qwen\\qwen_3_06b_base.safetensors';
 const ANIMA_VAE = process.env.ANIMA_VAE || 'qwen_image_vae.safetensors';
 const ANIMA_LORA = process.env.ANIMA_LORA || 'Anima\\anima_style_slay_the_spire_v2-000018.safetensors';
+const ANIMA_STEPS = Number(process.env.ANIMA_STEPS || 10);
 const SEED_BASE = process.env.KREA2_SEED_BASE !== undefined && process.env.KREA2_SEED_BASE !== '' ? Number(process.env.KREA2_SEED_BASE) : 1000;
 
 // Replica o workflow "Anima-simples.json" do usuário:
-// UNETLoader (animeStudio_v4Anima) + CLIPLoader type "qwen_image" (Qwen3-0.6B)
-// + LoRA minimalistflat + 8 passos er_sde cfg 5 + ControlOrderFreeMemory.
+// UNETLoader (minijma_1) + CLIPLoader type "qwen_image" (Qwen3-0.6B)
+// + LoraLoader (Anima\minimalistflat-000006) + 8 passos er_sde cfg 5
+// + ControlOrderFreeMemory.
 // Gera imagens mais rápido que o Z-Image Turbo mantendo estilo flat clean.
 const NEGATIVE_PROMPT = 'worst quality, low quality, lowres, score_1, score_2, score_3, score_4, blurry, snfw, cropped, long fingers, bad anatomy, missing fingers, random objects, distorted body, deformed hands, extra arms, extra legs, extra fingers, low resolution, bad anatomy, bad proportions, gore';
 
@@ -27,7 +29,7 @@ const WORKFLOW_TEMPLATE = {
   "5": { class_type: "CLIPTextEncode", inputs: { clip: ["4", 1], text: "__POSITIVE__" } },
   "6": { class_type: "CLIPTextEncode", inputs: { clip: ["4", 1], text: NEGATIVE_PROMPT } },
   "7": { class_type: "EmptyLatentImage", inputs: { width: 1152, height: 640, batch_size: 1 } },
-  "8": { class_type: "KSampler", inputs: { model: ["4", 0], positive: ["5", 0], negative: ["6", 0], latent_image: ["7", 0], seed: "__SEED__", steps: 12, cfg: 5, sampler_name: "er_sde", scheduler: "simple", denoise: 1.0 } },
+  "8": { class_type: "KSampler", inputs: { model: ["4", 0], positive: ["5", 0], negative: ["6", 0], latent_image: ["7", 0], seed: "__SEED__", steps: "__STEPS__", cfg: 5, sampler_name: "er_sde", scheduler: "simple", denoise: 1.0 } },
   "9": { class_type: "ControlOrderFreeMemory", inputs: { persist_any_1: ["8", 0], free_memory: true } },
   "10": { class_type: "VAEDecode", inputs: { samples: ["9", 0], vae: ["3", 0] } },
   "11": { class_type: "SaveImage", inputs: { images: ["10", 0], filename_prefix: "teologia_slide" } },
@@ -81,8 +83,9 @@ export async function gerarImagemSlide(prompt, seed = 42) {
   workflow['2'].inputs.clip_name = ANIMA_CLIP;
   workflow['3'].inputs.vae_name = ANIMA_VAE;
   workflow['4'].inputs.lora_name = ANIMA_LORA;
-  workflow['5'].inputs.text = `${prompt}, any text must be written in Brazilian Portuguese`;
+  workflow['5'].inputs.text = limparTextoDePromptImagem(prompt);
   workflow['8'].inputs.seed = seed;
+  workflow['8'].inputs.steps = ANIMA_STEPS;
   const promptId = await submeterPrompt(workflow);
   const files = await aguardarExecucao(promptId);
   const file = files[0];
