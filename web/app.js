@@ -43,6 +43,13 @@ function slugDe(topico) {
     .replace(/^-+|-+$/g, '');
 }
 
+// URL de imagem com cache-busting: inclui o mtime do arquivo, então ao regenerar
+// uma imagem o navegador busca a versão nova em vez de exibir a em cache.
+function urlImagem(arquivo, mtime) {
+  const v = mtime != null && mtime !== false ? mtime : Date.now();
+  return `/media/${estado.slug}/${arquivo}?v=${v}`;
+}
+
 function toast(msg, erro = false) {
   const t = $('#toast');
   t.textContent = msg;
@@ -509,7 +516,7 @@ function renderEtapa2(el) {
   const cards = itens
     .map((s, i) => {
       const img = s.imagem.existe
-        ? `<img src="/media/${estado.slug}/${s.arquivo}" loading="lazy" />`
+        ? `<img src="${urlImagem(s.arquivo, s.imagem.mtime)}" loading="lazy" />`
         : '';
       const regen = s.imagem.existe
         ? `<button class="regen" data-action="regen-imagem" data-slide="${s.id}" title="Regenerar imagem (novo seed)">↻</button>`
@@ -748,7 +755,7 @@ function abrirModalSlide(i) {
   if (!itens.length) return;
   estado.modalIndice = ((i % itens.length) + itens.length) % itens.length;
   const s = itens[estado.modalIndice];
-  $('#modal-slide-img').src = `/media/${estado.slug}/${s.arquivo}`;
+  $('#modal-slide-img').src = urlImagem(s.arquivo, s.imagem.mtime);
   $('#modal-slide-img').alt = s.titulo || '';
   $('#modal-slide-contador').textContent = `${estado.modalIndice + 1} / ${itens.length}`;
   $('#modal-slide-titulo').textContent = s.titulo || '';

@@ -358,6 +358,33 @@ export function limparTextoDePromptImagem(prompt) {
   return p;
 }
 
+/**
+ * Regras fixas de descrição de personagem anexadas a TODO prompt de imagem
+ * (em inglês, pois o modelo de imagem recebe prompts em inglês):
+ *  - declara sempre o gênero de cada figura humana (homem ou mulher);
+ *  - homem comum sem nome e da época atual: cabelo curto, camisa, calça e sapatos;
+ *  - personagem bíblico/histórico masculino: roupas da época (túnica/manto, sandálias);
+ *  - mulher comum sem nome e da época atual: modesta e recatada, sem pernas de fora,
+ *    sem decote nem alças finas;
+ *  - nenhum homem de cabelos longos, a menos que seja um personagem masculino
+ *    especificamente conhecido por isso (ex.: Sansão).
+ */
+export const REGRAS_PERSONAGENS_IMAGEM =
+  'character guidelines: every human figure must be clearly a man or a woman; ' +
+  'ordinary man (no proper name, present day) with short hair, shirt, pants and shoes; ' +
+  'biblical or historical male character wearing era-appropriate clothing (robe, tunic, sandals); ' +
+  'ordinary woman (no proper name, present day) in a modest fully covered outfit, no bare legs, ' +
+  'no cleavage, no sleeveless top; no man with long hair unless he is a specific male character ' +
+  'famous for long hair';
+
+/** Anexa as regras de personagem a um prompt de imagem (idempotente — não duplica se já presentes). */
+export function anexarRegrasPersonagens(prompt) {
+  const p = String(prompt ?? '').trim();
+  if (!p) return p;
+  if (/character guidelines/i.test(p)) return p;
+  return `${p}, ${REGRAS_PERSONAGENS_IMAGEM}`;
+}
+
 /** Escapa texto para HTML (atributos/innerHTML). */
 export const esc = (s) =>
   String(s ?? '')

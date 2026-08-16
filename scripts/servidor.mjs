@@ -419,7 +419,9 @@ async function listarAulas() {
         imagensCompletas: st.imagensCompletas,
         videoPronto: st.video.existe,
         pdfPronto: st.pdf.existe,
-        thumbnail: existsSync(join(OUTPUT_DIR, d.name, 'slide-01.png')) ? `/media/${d.name}/slide-01.png` : null,
+        thumbnail: existsSync(join(OUTPUT_DIR, d.name, 'slide-01.png'))
+          ? `/media/${d.name}/slide-01.png?v=${mtimeDe(join(OUTPUT_DIR, d.name, 'slide-01.png'))}`
+          : null,
       });
     } catch (e) {
       console.error(`[listarAulas] Erro ao ler ${d.name}/roteiro.json:`, e.message);

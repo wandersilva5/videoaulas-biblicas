@@ -2,7 +2,7 @@ import { readFile, mkdir, writeFile, copyFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { imagemPromptIntro, imagemPromptConclusao, limparTextoDePromptImagem } from './util.mjs';
+import { imagemPromptIntro, imagemPromptConclusao, limparTextoDePromptImagem, anexarRegrasPersonagens } from './util.mjs';
 
 const COMFY_URL = process.env.COMFY_URL || 'http://127.0.0.1:8188';
 const COMFY_OUTPUT_DIR = process.env.COMFY_OUTPUT_DIR || 'D:\\ComfyUI_windows_portable\\ComfyUI\\output';
@@ -10,16 +10,16 @@ const COMFY_OUTPUT_DIR = process.env.COMFY_OUTPUT_DIR || 'D:\\ComfyUI_windows_po
 const ANIMA_UNET = process.env.ANIMA_UNET || 'anima\\anima-base-v1.0.safetensors';
 const ANIMA_CLIP = process.env.ANIMA_CLIP || 'qwen\\qwen_3_06b_base.safetensors';
 const ANIMA_VAE = process.env.ANIMA_VAE || 'qwen_image_vae.safetensors';
-const ANIMA_LORA = process.env.ANIMA_LORA || 'Anima\\anima_style_slay_the_spire_v2-000018.safetensors';
+const ANIMA_LORA = process.env.ANIMA_LORA || 'Anima\\minimalistflat-000006.safetensors';
 const ANIMA_STEPS = Number(process.env.ANIMA_STEPS || 10);
 const SEED_BASE = process.env.KREA2_SEED_BASE !== undefined && process.env.KREA2_SEED_BASE !== '' ? Number(process.env.KREA2_SEED_BASE) : 1000;
 
 // Replica o workflow "Anima-simples.json" do usuário:
-// UNETLoader (minijma_1) + CLIPLoader type "qwen_image" (Qwen3-0.6B)
+// UNETLoader (anima-base-v1.0) + CLIPLoader type "qwen_image" (Qwen3-0.6B)
 // + LoraLoader (Anima\minimalistflat-000006) + 8 passos er_sde cfg 5
 // + ControlOrderFreeMemory.
 // Gera imagens mais rápido que o Z-Image Turbo mantendo estilo flat clean.
-const NEGATIVE_PROMPT = 'worst quality, low quality, lowres, score_1, score_2, score_3, score_4, blurry, snfw, cropped, long fingers, bad anatomy, missing fingers, random objects, distorted body, deformed hands, extra arms, extra legs, extra fingers, low resolution, bad anatomy, bad proportions, gore';
+const NEGATIVE_PROMPT = 'worst quality, low quality, lowres, score_1, score_2, score_3, score_4, blurry, jpeg artifacts, cropped, long fingers, sepia, bad anatomy, missing fingers, artist name, random objects, props, furniture, text, logo, watermark, distorted body, deformed hands, extra arms, extra legs, extra fingers, low resolution, low detail, bad anatomy, bad proportions, gore,';
 
 const WORKFLOW_TEMPLATE = {
   "1": { class_type: "UNETLoader", inputs: { unet_name: "__UNET__", weight_dtype: "default" } },
@@ -83,7 +83,7 @@ export async function gerarImagemSlide(prompt, seed = 42) {
   workflow['2'].inputs.clip_name = ANIMA_CLIP;
   workflow['3'].inputs.vae_name = ANIMA_VAE;
   workflow['4'].inputs.lora_name = ANIMA_LORA;
-  workflow['5'].inputs.text = limparTextoDePromptImagem(prompt);
+  workflow['5'].inputs.text = anexarRegrasPersonagens(limparTextoDePromptImagem(prompt));
   workflow['8'].inputs.seed = seed;
   workflow['8'].inputs.steps = ANIMA_STEPS;
   const promptId = await submeterPrompt(workflow);
