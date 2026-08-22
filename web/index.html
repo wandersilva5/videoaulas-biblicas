@@ -15,6 +15,7 @@
       </button>
       <div class="topo-acoes">
         <span class="job-topo" id="job-topo" hidden></span>
+        <button class="btn btn-ghost" id="btn-logs" title="Ver logs em tempo real">📋 Logs</button>
         <button class="btn btn-ghost" id="btn-servicos" title="Status dos serviços">◉ Serviços</button>
         <button class="btn btn-ghost" id="btn-config" title="Configurações">⚙</button>
       </div>
@@ -47,6 +48,7 @@
           <div class="caminho">
             <button class="btn btn-ghost" id="btn-voltar">← Aulas</button>
             <h2 id="titulo-aula"></h2>
+            <button class="btn btn-ghost btn-mini" id="btn-renomear-aula" title="Renomear título da aula">✏️</button>
             <button class="btn btn-ghost btn-mini" id="btn-atualizar" title="Recarregar roteiro e artefatos">↻ Atualizar</button>
             <button class="btn btn-ghost btn-mini btn-perigo" id="btn-excluir-aula" title="Excluir esta aula">🗑</button>
             <div class="spacer"></div>
@@ -57,7 +59,10 @@
           <section class="painel-log">
             <div class="painel-log-topo">
               <button class="btn btn-ghost" id="btn-toggle-log">▾ Log das etapas</button>
-              <button class="btn btn-ghost btn-mini" id="btn-limpar-log">Limpar</button>
+              <div class="painel-log-acoes">
+                <button class="btn btn-ghost btn-mini" id="btn-copiar-log" title="Copiar logs para a área de transferência">📋 Copiar</button>
+                <button class="btn btn-ghost btn-mini" id="btn-limpar-log">Limpar</button>
+              </div>
             </div>
             <div id="log-linhas" class="log-linhas"></div>
           </section>
@@ -65,6 +70,24 @@
       </div>
     </section>
   </main>
+
+  <!-- Modal de logs global -->
+  <div id="modal-logs" class="modal" hidden>
+    <div class="modal-janela modal-janela-larga">
+      <div class="modal-header-flex">
+        <h3>Logs do Sistema</h3>
+        <div class="painel-log-acoes">
+          <button class="btn btn-ghost btn-mini" id="btn-copiar-log-modal" title="Copiar logs">📋 Copiar</button>
+          <button class="btn btn-ghost btn-mini" id="btn-limpar-log-modal">Limpar</button>
+        </div>
+      </div>
+      <p class="modal-subtitulo">Acompanhe a saída dos comandos e diagnósticos em tempo real.</p>
+      <div id="log-linhas-modal" class="log-linhas aberto log-modal-conteudo"></div>
+      <div class="modal-acoes">
+        <button class="btn btn-ghost" id="btn-fechar-logs">Fechar</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Modal de serviços -->
   <div id="modal-servicos" class="modal" hidden>

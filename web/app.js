@@ -5,8 +5,9 @@ const ETAPAS = [
   { n: 2, rotulo: 'Imagens' },
   { n: 3, rotulo: 'Narração' },
   { n: 4, rotulo: 'Vídeo' },
-  { n: 5, rotulo: 'PDF' },
-  { n: 6, rotulo: 'Questionário' },
+  { n: 5, rotulo: 'Short' },
+  { n: 6, rotulo: 'PDF' },
+  { n: 7, rotulo: 'Questionário' },
 ];
 
 const estado = {
@@ -23,7 +24,7 @@ const estado = {
   logs: [],
 };
 
-const NOME_ETAPA = { roteiro: 'Roteiro', imagens: 'Imagens', narracao: 'Narração', video: 'Vídeo', pdf: 'PDF', questionario: 'Questionário' };
+const NOME_ETAPA = { roteiro: 'Roteiro', imagens: 'Imagens', narracao: 'Narração', video: 'Vídeo', short: 'Short', pdf: 'PDF', questionario: 'Questionário' };
 
 // Cópia browser-safe de esc/slugDe (util.mjs não pode ser importado no navegador:
 // depende de node:crypto). Mantidas em sincronia com scripts/util.mjs.
@@ -71,19 +72,76 @@ async function api(path, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Log (SSE)
+// Log (SSE e Histórico)
 // ---------------------------------------------------------------------------
-function adicionarLog(msg) {
-  estado.logs.push(msg);
-  if (estado.logs.length > 400) estado.logs.splice(0, estado.logs.length - 400);
-  const el = $('#log-linhas');
-  if (!el.classList.contains('aberto')) return;
+function formatarLinhaLog(msg) {
+  const hora = new Date(msg.ts || Date.now()).toLocaleTimeString('pt-BR');
   const div = document.createElement('div');
   div.className = `log-linha ${msg.tipo || 'log'}`;
-  const hora = new Date(msg.ts).toLocaleTimeString('pt-BR');
   div.innerHTML = `<span class="hora">${hora}</span>${esc(msg.linha || msg.tipo)}`;
-  el.appendChild(div);
+  return div;
+}
+
+function adicionarLog(msg) {
+  estado.logs.push(msg);
+  if (estado.logs.length > 500) estado.logs.splice(0, estado.logs.length - 500);
+
+  if (msg.tipo === 'erro') {
+    const btnLogs = $('#btn-logs');
+    if (btnLogs) btnLogs.classList.add('tem-erro');
+  }
+
+  // Painel inline (na tela da aula)
+  const el = $('#log-linhas');
+  if (el && el.classList.contains('aberto')) {
+    el.appendChild(formatarLinhaLog(msg));
+    el.scrollTop = el.scrollHeight;
+  }
+
+  // Modal global de logs
+  const elModal = $('#log-linhas-modal');
+  if (elModal && !$('#modal-logs').hidden) {
+    elModal.appendChild(formatarLinhaLog(msg));
+    elModal.scrollTop = elModal.scrollHeight;
+  }
+}
+
+function renderizarTodosLogs(containerId) {
+  const el = $(containerId);
+  if (!el) return;
+  el.innerHTML = '';
+  for (const m of estado.logs) {
+    el.appendChild(formatarLinhaLog(m));
+  }
   el.scrollTop = el.scrollHeight;
+}
+
+function copiarLogsTexto() {
+  if (!estado.logs.length) return toast('Nenhum log para copiar.', true);
+  const texto = estado.logs
+    .map((m) => `[${new Date(m.ts || Date.now()).toLocaleTimeString('pt-BR')}] [${m.tipo || 'log'}] ${m.linha || m.tipo}`)
+    .join('\n');
+  navigator.clipboard.writeText(texto)
+    .then(() => toast('Logs copiados para a área de transferência!'))
+    .catch(() => toast('Não foi possível copiar os logs.', true));
+}
+
+function abrirModalLogs() {
+  renderizarTodosLogs('#log-linhas-modal');
+  $('#modal-logs').hidden = false;
+}
+
+function fecharModalLogs() {
+  $('#modal-logs').hidden = true;
+}
+
+function abrirPainelLogsInline() {
+  const el = $('#log-linhas');
+  if (!el) return;
+  el.classList.add('aberto');
+  $('#btn-toggle-log').textContent = '▴ Log das etapas';
+  renderizarTodosLogs('#log-linhas');
+  el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +245,8 @@ function statusEtapa(n) {
   }
   if (n === 3) return st.audioCompleto ? 'ok' : 'alerta';
   if (n === 4) return st.video.existe ? 'ok' : 'erro';
-  if (n === 5) return st.pdf?.existe ? 'ok' : 'erro';
+  if (n === 5) return st.short?.existe ? 'ok' : 'erro';
+  if (n === 6) return st.pdf?.existe ? 'ok' : 'erro';
   return st.questionario?.existe ? 'ok' : 'erro';
 }
 
@@ -222,7 +281,8 @@ function mudarEtapa(n) {
   else if (n === 3) renderEtapa3(container);
   else if (n === 4) renderEtapa4(container);
   else if (n === 5) renderEtapa5(container);
-  else renderEtapa6(container);
+  else if (n === 6) renderEtapa6(container);
+  else renderEtapa7(container);
   sincronizarBotoes();
   renderStatusJob();
 }
@@ -254,9 +314,11 @@ function renderStatusJob() {
     job.status === 'erro' ? '✕' : '🔄';
   const statusTexto = job.status === 'ok' ? `${rotulo} concluída com sucesso` :
     job.status === 'erro' ? `${rotulo} falhou` : `${rotulo} em andamento`;
-  const botaoCancelar =
+  const botaoAcao =
     job.status === 'rodando'
       ? `<button class="btn btn-ghost btn-mini status-cancelar" id="btn-cancelar-job" title="Cancelar este job">✕ Cancelar</button>`
+      : job.status === 'erro'
+      ? `<button class="btn btn-ghost btn-mini status-ver-log" id="btn-status-ver-log" title="Ver detalhes do erro no log">📋 Ver Log</button>`
       : '';
   el.innerHTML = `
     <span class="status-icone">${icone}</span>
@@ -266,9 +328,20 @@ function renderStatusJob() {
       ${job.status === 'rodando' && job.iniciadoEm ? `<span class="status-desde">em andamento há ${tempoDesde(job.iniciadoEm)}</span>` : ''}
       ${job.pct != null ? `<div class="barra-progresso status-barra"><div style="width:${Math.max(0, Math.min(100, job.pct))}%"></div></div>` : ''}
     </div>
-    ${botaoCancelar}`;
+    ${botaoAcao}`;
   atualizarIndicadorTopo(job.status === 'rodando');
 }
+
+// Clique no banner de status (cancelar ou abrir log)
+document.addEventListener('click', (ev) => {
+  if (ev.target && ev.target.id === 'btn-status-ver-log') {
+    if (estado.tela === 'aula') {
+      abrirPainelLogsInline();
+    } else {
+      abrirModalLogs();
+    }
+  }
+});
 
 function atualizarIndicadorTopo(ativo) {
   const el = $('#job-topo');
@@ -641,18 +714,91 @@ function renderEtapa4(el) {
     ${videos}`;
 }
 
-function setProgressoVideo(pct, texto) {
-  const area = $('#area-progresso-video');
+function setProgressoVideo(pct, texto, etapa = 4) {
+  const areaId = etapa === 5 ? '#area-progresso-short' : '#area-progresso-video';
+  const barraId = etapa === 5 ? '#barra-progresso-short' : '#barra-progresso-video';
+  const msgId = etapa === 5 ? '#msg-progresso-short' : '#msg-progresso-video';
+  const area = $(areaId);
   if (!area) return;
   area.hidden = false;
-  $('#barra-progresso-video').style.width = `${Math.max(0, Math.min(100, pct))}%`;
-  $('#msg-progresso-video').textContent = texto || '…';
+  $(barraId).style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  $(msgId).textContent = texto || '…';
 }
 
 // ---------------------------------------------------------------------------
-// Etapa 5 — PDF de estudo
+// Etapa 5 — YouTube Short
 // ---------------------------------------------------------------------------
 function renderEtapa5(el) {
+  const st = estado.artefatos;
+  const short = st.short;
+
+  const shortHtml = short?.existe
+    ? `
+      <div class="cartao">
+        <div class="video-item">
+          <div class="video-rotulo">
+            <span>${esc(short.arquivo)}</span>
+            <a class="btn btn-mini" href="/media/${estado.slug}/${esc(short.arquivo)}" download title="Baixar YouTube Short">⬇ download</a>
+          </div>
+          <video class="player-video" controls src="/media/${estado.slug}/${esc(short.arquivo)}"></video>
+        </div>
+        <p class="msg-progresso" style="margin-top:10px">Gerado em ${new Date(short.mtime).toLocaleString('pt-BR')} · ${(short.tamanho / (1024 * 1024)).toFixed(1)} MB</p>
+      </div>`
+    : '<p class="msg-progresso" style="color:var(--alerta)">YouTube Short ainda não gerado.</p>';
+
+  const videos = (st.shorts || [])
+    .filter((v) => v.arquivo !== short?.arquivo)
+    .map((v) => `
+    <div class="video-item">
+      <div class="video-rotulo">
+        <span>${esc(v.arquivo)}</span>
+        <a class="btn btn-mini" href="/media/${estado.slug}/${esc(v.arquivo)}" download title="Baixar MP4">⬇ download</a>
+      </div>
+      <video class="player-video" controls src="/media/${estado.slug}/${esc(v.arquivo)}"></video>
+    </div>`)
+    .join('');
+
+  const problemas = [];
+  if (!st.imagensCompletas) problemas.push('faltam imagens (etapa 2)');
+  if (!st.audioCompleto) problemas.push('faltam narrações (etapa 3)');
+  const pode = problemas.length === 0;
+
+  el.innerHTML = `
+    <div class="etapa-topo">
+      <h3>YouTube Short</h3>
+      <button class="btn btn-primario" data-action="gerar-short" ${pode ? '' : 'disabled'}>📱 Gerar Short</button>
+    </div>
+    ${pode ? '' : `<p class="msg-progresso" style="color:var(--alerta)">⚠ ${problemas.join(' · ')}</p>`}
+    <div class="cartao">
+      <div class="video-config">
+        <label>FPS
+          <select id="cfg-short-fps"><option selected>24</option><option>30</option><option>60</option></select>
+        </label>
+        <label>Resolução (vertical 9:16)
+          <select id="cfg-short-res">
+            <option value="1080,1920" selected>1080×1920 · Full HD</option>
+            <option value="720,1280">720×1280 · HD</option>
+            <option value="2160,3840">2160×3840 · 4K vertical</option>
+            <option value="custom">Personalizado…</option>
+          </select>
+        </label>
+        <label>Largura (custom) <input id="cfg-short-width" type="number" value="1080" min="320" step="16" /></label>
+        <label>Altura (custom) <input id="cfg-short-height" type="number" value="1920" min="240" step="16" /></label>
+        <label>Segundos de margem/slide <input id="cfg-short-padding" type="number" value="0.2" min="0" step="0.1" /></label>
+      </div>
+      <p class="msg-progresso">O Short sai como <strong><slug>-short-<largura>x<altura>.mp4</strong> — formato vertical 9:16, ≤60s. Usa intro + até 4 slides + conclusão da aula principal.</p>
+      <div id="area-progresso-short" hidden>
+        <div class="msg-progresso" id="msg-progresso-short">Preparando…</div>
+        <div class="barra-progresso"><div id="barra-progresso-short"></div></div>
+      </div>
+    </div>
+    ${shortHtml}
+    ${videos}`;
+
+// ---------------------------------------------------------------------------
+// Etapa 6 — PDF de estudo
+// ---------------------------------------------------------------------------
+function renderEtapa6(el) {
   const st = estado.artefatos;
   const pdf = st.pdf;
   const pdfHtml = pdf?.existe
@@ -679,9 +825,9 @@ function renderEtapa5(el) {
 }
 
 // ---------------------------------------------------------------------------
-// Etapa 6 — Vídeo de Questionário
+// Etapa 7 — Vídeo de Questionário
 // ---------------------------------------------------------------------------
-function renderEtapa6(el) {
+function renderEtapa7(el) {
   const st = estado.artefatos;
   const quiz = st.questionario;
 
@@ -924,10 +1070,23 @@ $('#etapa-container').addEventListener('click', async (ev) => {
     const fps = $('#cfg-fps').value;
     const [w, h] = $('#cfg-res').value === 'custom' ? [$('#cfg-width').value, $('#cfg-height').value] : $('#cfg-res').value.split(',');
     const padding = $('#cfg-padding').value;
-    setProgressoVideo(0, 'Iniciando montagem…');
+    setProgressoVideo(0, 'Iniciando montagem…', 4);
     return rodarJob(
       api(`/api/video/${estado.slug}`, { method: 'POST', body: JSON.stringify({ fps: Number(fps), width: Number(w), height: Number(h), padding: Number(padding) }) }),
       'Vídeo montado com sucesso!',
+    );
+  }
+  if (acao === 'gerar-short') {
+    if (estado.servicos && (!servicoOk('ffmpeg') || !servicoOk('ffprobe') || !servicoOk('chromium'))) {
+      return toast('Falta ffmpeg/ffprobe ou Chromium — não é possível montar o Short.', true);
+    }
+    const fps = $('#cfg-short-fps').value;
+    const [w, h] = $('#cfg-short-res').value === 'custom' ? [$('#cfg-short-width').value, $('#cfg-short-height').value] : $('#cfg-short-res').value.split(',');
+    const padding = $('#cfg-short-padding').value;
+    setProgressoVideo(0, 'Iniciando montagem do Short…', 5);
+    return rodarJob(
+      api(`/api/short/${estado.slug}`, { method: 'POST', body: JSON.stringify({ fps: Number(fps), width: Number(w), height: Number(h), padding: Number(padding) }) }),
+      'YouTube Short gerado com sucesso!',
     );
   }
   if (acao === 'gerar-pdf' || acao === 'regenerar-pdf') {
@@ -1076,13 +1235,18 @@ async function carregarAulas() {
       a.imagensCompletas ? '<span class="badge ok">✓ imagens</span>' : '<span class="badge alerta">imagens</span>',
       a.audioCompleto ? '<span class="badge ok">✓ áudio</span>' : '<span class="badge alerta">áudio</span>',
       a.videoPronto ? '<span class="badge ok">✓ vídeo</span>' : '',
+      a.shortPronto ? '<span class="badge ok">✓ short</span>' : '',
       a.pdfPronto ? '<span class="badge ok">✓ PDF</span>' : '',
     ].join('');
     const thumb = a.thumbnail
       ? `<img class="card-thumb" src="${a.thumbnail}" alt="" loading="lazy" />`
       : `<div class="card-thumb card-thumb-placeholder">✦</div>`;
     card.innerHTML = `
-      <div class="card-thumb-wrap">${thumb}<button class="btn-excluir" data-slug="${esc(a.slug)}" title="Excluir aula">🗑</button></div>
+      <div class="card-thumb-wrap">
+        ${thumb}
+        <button class="btn-renomear" data-slug="${esc(a.slug)}" data-titulo="${esc(a.titulo_aula)}" title="Renomear título da aula">✏️</button>
+        <button class="btn-excluir" data-slug="${esc(a.slug)}" title="Excluir aula">🗑</button>
+      </div>
       <h3>${esc(a.titulo_aula)}</h3>
       <div class="meta">${a.slides} slides</div>
       <div class="badges">${badges}</div>`;
@@ -1090,7 +1254,34 @@ async function carregarAulas() {
   }
 }
 
+async function renomearAula(slug, tituloAtual) {
+  const novoTitulo = prompt('Novo título para esta aula:', tituloAtual || '');
+  if (!novoTitulo || novoTitulo.trim() === '' || novoTitulo.trim() === tituloAtual) return;
+  try {
+    const res = await api(`/api/aulas/${slug}/titulo`, {
+      method: 'PUT',
+      body: JSON.stringify({ titulo_aula: novoTitulo.trim() }),
+    });
+    toast('Título da aula atualizado com sucesso!');
+    if (estado.slug === slug && estado.roteiro) {
+      estado.roteiro.titulo_aula = res.titulo_aula;
+      $('#titulo-aula').textContent = res.titulo_aula;
+      if (estado.etapa === 1) renderEtapa1($('#etapa-container'));
+    }
+    if (estado.tela === 'dashboard') {
+      carregarAulas();
+    }
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
 $('#lista-aulas').addEventListener('click', async (ev) => {
+  const btnRenomear = ev.target.closest('.btn-renomear');
+  if (btnRenomear) {
+    ev.stopPropagation();
+    return renomearAula(btnRenomear.dataset.slug, btnRenomear.dataset.titulo);
+  }
   const btn = ev.target.closest('.btn-excluir');
   if (!btn) return;
   ev.stopPropagation();
@@ -1172,6 +1363,11 @@ $('#btn-nova-aula-pdf').onclick = async () => {
 
 $('#btn-voltar').onclick = () => mostrarTela('dashboard');
 $('#btn-inicio').onclick = () => mostrarTela('dashboard');
+$('#btn-renomear-aula').onclick = () => {
+  if (estado.slug && estado.roteiro) {
+    renomearAula(estado.slug, estado.roteiro.titulo_aula);
+  }
+};
 $('#btn-excluir-aula').onclick = async () => {
   const slug = estado.slug;
   if (!slug) return;
@@ -1208,15 +1404,27 @@ $('#btn-toggle-log').onclick = () => {
   el.classList.toggle('aberto');
   $('#btn-toggle-log').textContent = el.classList.contains('aberto') ? '▴ Log das etapas' : '▾ Log das etapas';
   if (el.classList.contains('aberto')) {
-    el.innerHTML = '';
-    for (const m of estado.logs) adicionarLog(m);
-    el.scrollTop = el.scrollHeight;
+    renderizarTodosLogs('#log-linhas');
   }
 };
+
 $('#btn-limpar-log').onclick = () => {
   estado.logs = [];
   $('#log-linhas').innerHTML = '';
+  $('#log-linhas-modal').innerHTML = '';
+  $('#btn-logs').classList.remove('tem-erro');
+  toast('Logs limpos.');
 };
+
+$('#btn-copiar-log').onclick = copiarLogsTexto;
+$('#btn-copiar-log-modal').onclick = copiarLogsTexto;
+$('#btn-limpar-log-modal').onclick = () => $('#btn-limpar-log').click();
+
+$('#btn-logs').onclick = () => {
+  $('#btn-logs').classList.remove('tem-erro');
+  abrirModalLogs();
+};
+$('#btn-fechar-logs').onclick = fecharModalLogs;
 
 // ---------------------------------------------------------------------------
 // SSE
@@ -1246,6 +1454,15 @@ sse.addEventListener('progresso', (ev) => {
       estado.job.msg = msg.linha;
       renderStatusJob();
     }
+    // Ao receber erro, expande os logs inline se estiver no workspace
+    if (estado.tela === 'aula') {
+      const el = $('#log-linhas');
+      if (el && !el.classList.contains('aberto')) {
+        el.classList.add('aberto');
+        $('#btn-toggle-log').textContent = '▴ Log das etapas';
+        renderizarTodosLogs('#log-linhas');
+      }
+    }
   }
   if (msg.tipo === 'log') {
     if (estado.job?.etapa === msg.etapa) {
@@ -1258,18 +1475,35 @@ sse.addEventListener('progresso', (ev) => {
     estado.jobAtivo = false;
     sincronizarBotoes();
     atualizarIndicadorTopo(false);
-    if (estado.etapa === 4) setProgressoVideo(msg.ok ? 100 : 0, msg.ok ? 'Vídeo pronto!' : 'Falha na montagem');
+    if (estado.etapa === 4 || estado.etapa === 5) {
+      setProgressoVideo(
+        msg.ok ? 100 : 0,
+        msg.ok ? (estado.etapa === 4 ? 'Vídeo pronto!' : 'Short pronto!') : 'Falha na montagem',
+        estado.etapa
+      );
+    }
     estado.job = {
       etapa: msg.etapa,
       status: msg.ok ? 'ok' : 'erro',
-      msg: msg.ok ? 'Processo finalizado com sucesso.' : msg.cancelado ? 'Job cancelado pelo usuário.' : 'Falha na execução — veja o log.',
+      msg: msg.ok ? 'Processo finalizado com sucesso.' : msg.cancelado ? 'Job cancelado pelo usuário.' : 'Falha na execução — clique em "Ver Log" para detalhes.',
     };
     renderStatusJob();
+
+    // Se falhou, abre o painel de log automaticamente
+    if (!msg.ok && !msg.cancelado && estado.tela === 'aula') {
+      const el = $('#log-linhas');
+      if (el && !el.classList.contains('aberto')) {
+        el.classList.add('aberto');
+        $('#btn-toggle-log').textContent = '▴ Log das etapas';
+        renderizarTodosLogs('#log-linhas');
+      }
+    }
+
     clearTimeout(_jobClearT);
     _jobClearT = setTimeout(() => {
       estado.job = null;
       renderStatusJob();
-    }, 8000);
+    }, 12000);
     setTimeout(() => {
       if (estado.tela === 'aula') {
         carregarArtefatos();
@@ -1277,9 +1511,10 @@ sse.addEventListener('progresso', (ev) => {
       }
     }, 400);
   }
-  if ((msg.etapa === 'video' || msg.etapa === 'questionario') && msg.tipo === 'progress' && (estado.etapa === 4 || estado.etapa === 6)) {
+  if ((msg.etapa === 'video' || msg.etapa === 'short' || msg.etapa === 'questionario') && msg.tipo === 'progress' && (estado.etapa === 4 || estado.etapa === 5 || estado.etapa === 7)) {
     const m = /\((\d+)%\)/.exec(msg.linha);
-    if (estado.etapa === 4 && msg.etapa === 'video') setProgressoVideo(m ? Number(m[1]) : 0, msg.linha);
+    if (estado.etapa === 4 && msg.etapa === 'video') setProgressoVideo(m ? Number(m[1]) : 0, msg.linha, 4);
+    if (estado.etapa === 5 && msg.etapa === 'short') setProgressoVideo(m ? Number(m[1]) : 0, msg.linha, 5);
   }
   adicionarLog(msg);
 });
@@ -1291,6 +1526,19 @@ sse.addEventListener('progresso', (ev) => {
   estado.config = await api('/api/config');
   carregarServicos();
   setInterval(carregarServicos, 30000);
+  
+  // Carrega histórico de logs do servidor
+  try {
+    const resLogs = await api('/api/logs');
+    if (resLogs?.logs?.length) {
+      for (const item of resLogs.logs) {
+        adicionarLog(item);
+      }
+    }
+  } catch {
+    /* sem histórico */
+  }
+
   verJobServidor();
   setInterval(verJobServidor, 5000);
   setInterval(() => {

@@ -38,6 +38,17 @@ function postJson(url, body, { timeoutMs = 15 * 60 * 1000 } = {}) {
   });
 }
 
+async function postJsonComRetry(url, body, { timeoutMs = 15 * 60 * 1000, retries = 3 } = {}) {
+  for (let i = 1; i <= retries; i++) {
+    const resp = await postJson(url, body, { timeoutMs });
+    if (resp.status !== 503) return resp;
+    if (i === retries) throw new Error(`llama-server 503 após ${retries} tentativas`);
+    const espera = 5000 * i;
+    console.error(`  [retry] llama-server carregando modelo; aguardando ${espera / 1000}s (${i}/${retries})`);
+    await new Promise((r) => setTimeout(r, espera));
+  }
+}
+
 function extrairJson(content) {
   try {
     return JSON.parse(content.trim());
@@ -102,7 +113,7 @@ async function gerarQuestionario(roteiroTexto) {
     stream: false,
   };
 
-  const resp = await postJson(`${LLAMA_URL}/v1/chat/completions`, body);
+  const resp = await postJsonComRetry(`${LLAMA_URL}/v1/chat/completions`, body);
 
   if (resp.status !== 200) {
     throw new Error(`llama-server erro ${resp.status}: ${resp.text.slice(0, 500)}`);

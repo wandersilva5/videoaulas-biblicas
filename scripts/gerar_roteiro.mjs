@@ -38,6 +38,17 @@ function postJson(url, body, { timeoutMs = 30 * 60 * 1000 } = {}) {
   });
 }
 
+async function postJsonComRetry(url, body, { timeoutMs = 30 * 60 * 1000, retries = 3 } = {}) {
+  for (let i = 1; i <= retries; i++) {
+    const resp = await postJson(url, body, { timeoutMs });
+    if (resp.status !== 503) return resp;
+    if (i === retries) throw new Error(`llama-server 503 após ${retries} tentativas`);
+    const espera = 5000 * i;
+    console.error(`  [retry] llama-server carregando modelo; aguardando ${espera / 1000}s (${i}/${retries})`);
+    await new Promise((r) => setTimeout(r, espera));
+  }
+}
+
 const SYSTEM_PROMPT = `Você é um doutor em teologia bíblica, pentecostal. Você cria videoaulas simplifica conceitos teológicos em formato de apresentação de slides (tipo NotebookLM/PowerPoint animado).
 
 Cada slide deve ser composto de 75-90% por UMA imagem ilustrativa/didática que explica o conceito, e o texto aparece de forma curta como título e poucos pontos-chave.
@@ -53,7 +64,7 @@ Gere SEMPRE um JSON válido, sem markdown, sem texto extra, com esta estrutura e
       "id": "slide-01",
       "titulo": "Título curto do slide (max 8 palavras)",
       "pontos": ["ponto 1 curto", "ponto 2 curto", "ponto 3 curto"],
-      "narracao": "Texto de 60-90 palavras narrado, explicando o slide de forma didática e fluida, como se estivesse apresentando, citando a referência bíblica",
+      "narracao": "Texto de 60-90 palavras narrado (pode chegar a ~120 com a citação bíblica), explicando o slide de forma didática e fluida, como se estivesse apresentando: faça a argumentação do slide, CITE o versículo por extenso entre aspas (versão ARC) e explique o que ele significa. Deve funcionar sozinho, sem anunciar 'vamos ver' sem entregar a explicação",
       "referencia_biblica": "Livro capítulo:versículo (ex.: João 3:16)",
       "imagem_prompt": "Prompt de imagem em inglês que descreve UMA CENA VISUAL concreta e específica deste slide (baseada no título e nos pontos): personagem(ens), objeto(s) e cenário em ação, de forma ilustrável pelo modelo de imagem. Ex.: se o slide fala do argumento de Platão, descreva 'a philosopher in a greek tunic sitting on stone steps, raising one hand, marble columns and amphora beside him'; se fala da doutrina, 'a teacher pointing to a scroll, students with open bibles around a wooden table'. Estilo flat illustration, clean educational diagram, cores sóbrias (azul marinho, dourado, creme). TEXTO NA IMAGEM: evite ao máximo; se houver, apenas UMA palavra curta (1-2 letras de impressão simples, SEM acentos nem cedilhas, pois o modelo de imagem erra acentos — ex.: use 'FE' e não 'Fé')"
     }
@@ -64,13 +75,14 @@ Gere SEMPRE um JSON válido, sem markdown, sem texto extra, com esta estrutura e
 
 REGRAS:
 - Total de slides: no mínimo 15 (aula de 20-40 minutos); não há limite máximo.
-- Cada narração de slide: 60-90 palavras (aprox. 30-45 segundos falados).
+- Cada narração de slide: 60-90 palavras (ideal; pode chegar a ~120 quando incluir a citação bíblica por extenso).
 - Conteúdo: teologia bíblica básica, doutrina cristã, história da igreja, hermenêutica.
 - Linguagem: português do Brasil, tom respeitoso e didático.
 - Referências bíblicas: TODOS os slides, a introdução e a conclusão devem citar ao menos uma referência bíblica (livro capítulo:versículo) no campo "referencia_biblica" e mencioná-la na narração. Use a versão Almeida Revista e Corrigida (ARC) como base para o texto das citações.
 - As referências devem estar corretas e fiéis ao ensino bíblico, com o estudo permanecendo educacional, cristão e edificante (fé, doutrina e prática).
 - Explicação de termos: sempre que um termo técnico ou importante aparecer (ex.: teologia, hermenêutica, exegese, escatologia, soteriologia, graça, santificação, expiação, justificação, etc.), dedique um ponto do slide para explicá-lo de forma simples, com origem etimológica quando ajudar (ex.: "Teologia vem do grego: Teo = Deus + logia = estudo, ou seja, estudo sobre Deus"). Linguagem acessível, como quem conversa com um iniciante, sem jargão acadêmico.
 - Narração legível por leitor de voz (TTS): nos campos de narração (introducao, slides, conclusao) escreva as referências bíblicas por extenso, como seriam lidas em voz alta: livro numerado vira ordinal ("1 Coríntios" → "Primeira Coríntios", "2 Timóteo" → "Segunda Timóteo") e capítulo/versículo ficam totalmente por extenso (ex.: "João capítulo três e versículo dezesseis" em vez de "João 3:16"; "Primeira Pedro capítulo um, versículos do um a seis" em vez de "1 Pedro 1:1-6"). Já o campo "referencia_biblica" deve continuar no formato padrão (ex.: "1 Timóteo 3:1").
+- Narração completa e autossuficiente: CADA narração de slide deve explicar o conteúdo até o fim e funcionar sozinha — nunca apenas anunciar o que será visto ("vamos ver como..." ou "veremos no próximo slide") e parar por aí. Segue o padrão de cada slide com referência bíblica: 1) faça a afirmação e a argumentação principal do slide; 2) apresente o versículo por extenso (forma de leitura da regra de TTS) e CITE o texto do versículo entre aspas, na versão ARC — prefira UM versículo curto ou um trecho curto para caber no limite de palavras (ex.: "que diz: 'Sendo, pois, Abrão da idade de noventa e nove anos, apareceu o Senhor a Abrão, e disse-lhe: Eu sou o Deus Todo-Poderoso, anda em minha presença e sê perfeito'"); 3) explique em UMA única frase curta o que o versículo diz e como ele sustenta o ponto do slide (ex.: "Aqui Deus se apresenta a Abraão como o Todo-Poderoso, confirmando sua existência e autoridade"). A narração deve entregar a explicação no próprio slide, sem promessas não cumpridas.
 - imagem_prompt: CADA slide deve ter um prompt ÚNICO que descreva uma CENA VISUAL concreta e ilustrável (personagens, objetos e cenário em ação), retratando a cena única do tema falado naquele slide — nunca um conceito abstrato só com palavras. NUNCA repita o mesmo prompt em dois slides nem copie o exemplo da estrutura. TEXTO NA IMAGEM: evite ao máximo — a imagem deve valer por si só; se for essencial, use no máximo UMA palavra curta SEM acentos nem cedilhas (o modelo de imagem erra acentos; ex.: 'FE' em vez de 'Fé'), em português do Brasil, e o texto deve ser secundário, nunca competir com a imagem.
 - Personagens nos prompts de imagem: SEMPRE declare se a cena tem figura de homem ou de mulher (ou ambos). Homem comum sem nome e da época atual: cabelo curto, camisa, calça e sapatos. Personagem bíblico ou histórico masculino: roupas da época (túnica/manto e sandálias). Mulher comum sem nome e da época atual: vestimenta modesta e recatada, sem pernas de fora, sem decote nem alças finas. Homens NUNCA com cabelos longos, a menos que seja um personagem masculino especificamente conhecido por cabelos longos (ex.: Sansão).`;
 
@@ -81,7 +93,7 @@ function montarContentDoUsuario(topico, material, tentativa, MIN_SLIDES) {
     ? `\n\nBASEIE o conteúdo da aula neste material extraído de um PDF de estudo (apostila). Use os conceitos, a estrutura e os exemplos dele para montar os slides, mantendo o tom didático e as regras do prompt de sistema:\n\n--- INÍCIO DO MATERIAL ---\n${material}\n--- FIM DO MATERIAL ---`
     : '';
   if (tentativa > 1) {
-    return `${base}${materialBlock}\n\nATENÇÃO: a tentativa anterior foi rejeitada por não passar na validação. É obrigatório gerar no mínimo ${MIN_SLIDES} slides, cada um com id no padrão "slide-NN", narração de 60-90 palavras e campo "imagem_prompt" preenchido.`;
+    return `${base}${materialBlock}\n\nATENÇÃO: a tentativa anterior foi rejeitada por não passar na validação. É obrigatório gerar no mínimo ${MIN_SLIDES} slides, cada um com id no padrão "slide-NN", narração de 60-90 palavras (até ~120 com a citação bíblica) e campo "imagem_prompt" preenchido.`;
   }
   return `${base}${materialBlock}`;
 }
@@ -107,7 +119,7 @@ export async function gerarRoteiro(topico, { material } = {}) {
       stream: false,
     };
 
-    const resp = await postJson(`${LLAMA_URL}/v1/chat/completions`, body);
+    const resp = await postJsonComRetry(`${LLAMA_URL}/v1/chat/completions`, body);
 
     if (resp.status !== 200) {
       throw new Error(`llama-server erro ${resp.status}: ${resp.text.slice(0, 500)}`);
@@ -188,7 +200,7 @@ async function regerarPromptsImagemDuplicados(roteiro) {
     stream: false,
   };
 
-  const resp = await postJson(`${LLAMA_URL}/v1/chat/completions`, body);
+  const resp = await postJsonComRetry(`${LLAMA_URL}/v1/chat/completions`, body);
   if (resp.status !== 200) {
     console.error(`  Falha ao regerar prompts de imagem (llama ${resp.status}); mantendo os atuais.`);
     return 0;
@@ -404,7 +416,7 @@ export function validarRoteiro(roteiro, { minSlides = 15 } = {}) {
     const n = contarPalavras(s.narracao);
     if (typeof s.narracao !== 'string' || !s.narracao.trim()) erros.push(`${r}: narracao vazia`);
     else if (n < 30) erros.push(`${r}: narracao curta demais (${n} palavras)`);
-    else if (n < 50 || n > 110) avisos.push(`${r}: narracao com ${n} palavras (ideal 60-90)`);
+    else if (n < 50 || n > 130) avisos.push(`${r}: narracao com ${n} palavras (ideal 60-90, máx ~130 com citação bíblica)`);
 
     if (typeof s.referencia_biblica !== 'string' || !s.referencia_biblica.trim()) {
       avisos.push(`${r}: referencia_biblica vazia`);

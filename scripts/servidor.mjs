@@ -49,11 +49,14 @@ async function salvarConfig() {
 }
 
 // ---------------------------------------------------------------------------
-// Fila de eventos (SSE)
+// Fila de eventos (SSE) e Histórico de Logs
 // ---------------------------------------------------------------------------
 const clientes = new Set();
+const logsHistorico = [];
 
 function broadcast(msg) {
+  logsHistorico.push(msg);
+  if (logsHistorico.length > 500) logsHistorico.splice(0, logsHistorico.length - 500);
   const payload = `event: progresso\ndata: ${JSON.stringify(msg)}\n\n`;
   for (const res of clientes) {
     try {
@@ -143,7 +146,18 @@ function runJob({ etapa, args, env = {} }) {
       const j = jobAtual;
       jobAtual = null;
       const cancelado = j?.cancelado === true;
-      ultimoJob = { jobId, etapa, ok: code === 0 && !cancelado, cancelado, terminadoEm: Date.now() };
+      const stderrSummary = stderr.trim().split(/\r?\n/).slice(-20).join('\n');
+      if (code !== 0 && !cancelado) {
+        emit('erro', stderrSummary || `Etapa ${etapa} encerrou com erro (código ${code})`);
+      }
+      ultimoJob = {
+        jobId,
+        etapa,
+        ok: code === 0 && !cancelado,
+        cancelado,
+        terminadoEm: Date.now(),
+        erro: code === 0 ? null : (stderrSummary || `Código ${code}`),
+      };
       let resultado = null;
       try {
         resultado = JSON.parse(stdout.trim());
@@ -160,7 +174,6 @@ function runJob({ etapa, args, env = {} }) {
       if (code === 0) {
         resolve(resultado ?? {});
       } else {
-        const stderrSummary = stderr.trim().split(/\r?\n/).slice(-20).join('\n');
         const err = new Error(
           stderrSummary || `Etapa ${etapa} falhou (código ${code})`,
         );
@@ -272,6 +285,15 @@ async function artefatos(slug) {
     .sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
   const ultimoQuiz = videosQuiz[0] ?? null;
 
+  const videosShort = todosVideos
+    .filter((f) => f.includes('-short-'))
+    .map((f) => {
+      const p = join(outDir, f);
+      return { arquivo: f, mtime: mtimeDe(p), tamanho: existsSync(p) ? statSync(p).size : 0 };
+    })
+    .sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
+  const ultimoShort = videosShort[0] ?? null;
+
   const questionarioPath = join(outDir, 'questionario.json');
   const perguntasQuiz = await (async () => {
     if (!existsSync(questionarioPath)) return [];
@@ -316,6 +338,13 @@ async function artefatos(slug) {
       arquivo: ultimoPrincipal?.arquivo ?? null,
     },
     videos: videosPrincipais,
+    short: {
+      existe: !!ultimoShort,
+      mtime: ultimoShort?.mtime ?? null,
+      tamanho: ultimoShort?.tamanho ?? 0,
+      arquivo: ultimoShort?.arquivo ?? null,
+    },
+    shorts: videosShort,
     questionario: {
       existe: !!ultimoQuiz,
       mtime: ultimoQuiz?.mtime ?? null,
@@ -418,6 +447,7 @@ async function listarAulas() {
         audioCompleto: st.audioCompleto,
         imagensCompletas: st.imagensCompletas,
         videoPronto: st.video.existe,
+        shortPronto: st.short?.existe,
         pdfPronto: st.pdf.existe,
         thumbnail: existsSync(join(OUTPUT_DIR, d.name, 'slide-01.png'))
           ? `/media/${d.name}/slide-01.png?v=${mtimeDe(join(OUTPUT_DIR, d.name, 'slide-01.png'))}`
@@ -629,17 +659,33 @@ const server = createServer(async (req, res) => {
     }
 
     // ---- API ----
-    const m = path.match(/^\/api\/([^/]+)(?:\/([^/]+))?$/);
+    const m = path.match(/^\/api\/([^/]+)(?:\/([^/]+))?(?:\/([^/]+))?$/);
     if (!m) return json(res, 404, { erro: 'Rota não encontrada' });
     const recurso = m[1];
     const slug = m[2] ?? '';
+    const acao = m[3] ?? '';
 
-    if (recurso === 'aulas' && req.method === 'GET') {
+    if (recurso === 'aulas' && !acao && req.method === 'GET') {
       return json(res, 200, await listarAulas());
     }
 
+    // --- PUT /api/aulas/:slug/titulo — altera apenas o título de exibição da aula sem afetar o slug nem artefatos gerados ---
+    if (recurso === 'aulas' && acao === 'titulo' && (req.method === 'PUT' || req.method === 'PATCH')) {
+      if (!slug || !ehSlugValido(slug)) return json(res, 400, { erro: 'Slug inválido' });
+      const roteiroPath = join(OUTPUT_DIR, slug, 'roteiro.json');
+      if (!existsSync(roteiroPath)) return json(res, 404, { erro: 'Aula não encontrada' });
+      const body = await lerBody(req);
+      const novoTitulo = String(body.titulo_aula ?? '').trim();
+      if (!novoTitulo) return json(res, 400, { erro: 'O campo "titulo_aula" não pode ser vazio' });
+      const roteiro = JSON.parse(await readFile(roteiroPath, 'utf8'));
+      roteiro.titulo_aula = novoTitulo;
+      await writeFile(roteiroPath, JSON.stringify(roteiro, null, 2), 'utf8');
+      console.error(`[aulas] Título da aula "${slug}" alterado para: "${novoTitulo}"`);
+      return json(res, 200, { ok: true, slug, titulo_aula: novoTitulo });
+    }
+
     // --- DELETE /api/aulas/:slug — apaga aula e artefatos derivados ---
-    if (recurso === 'aulas' && req.method === 'DELETE') {
+    if (recurso === 'aulas' && !acao && req.method === 'DELETE') {
       if (!slug || !ehSlugValido(slug)) return json(res, 400, { erro: 'Slug inválido' });
       const outDir = join(OUTPUT_DIR, slug);
       if (!existsSync(outDir)) return json(res, 404, { erro: 'Aula não encontrada' });
@@ -663,6 +709,10 @@ const server = createServer(async (req, res) => {
 
     if (recurso === 'health' && req.method === 'GET') {
       return json(res, 200, await rotaHealth());
+    }
+
+    if (recurso === 'logs' && req.method === 'GET') {
+      return json(res, 200, { logs: logsHistorico });
     }
 
     // --- Cancelamento de job em execução ---
@@ -886,6 +936,32 @@ const server = createServer(async (req, res) => {
         return json(res, statusDeErroJob(e), { erro: e.message });
       }
       const arquivo = `${slug}-${String(body.width ?? 1920)}x${String(body.height ?? 1080)}.mp4`;
+      return json(res, 200, { ok: true, output_path: arquivo, url: `/media/${slug}/${arquivo}` });
+    }
+
+    // --- YouTube Short ---
+    if (recurso === 'short' && req.method === 'POST') {
+      const body = await lerBody(req);
+      if (!existsSync(roteiroPath)) return json(res, 404, { erro: 'Roteiro não existe' });
+      const st = await artefatos(slug);
+      const faltando = [];
+      if (!st.imagensCompletas) faltando.push('imagens de todos os slides');
+      if (!st.audioCompleto) faltando.push('narrações de todos os itens');
+      if (faltando.length) {
+        return json(res, 400, { erro: `Faltam artefatos: ${faltando.join(' e ')}. Gere-os antes de montar o Short.` });
+      }
+      const env = {
+        VIDEO_FPS: String(body.fps ?? 24),
+        VIDEO_WIDTH: String(body.width ?? 1080),
+        VIDEO_HEIGHT: String(body.height ?? 1920),
+        VIDEO_PADDING: String(body.padding ?? 0.2),
+      };
+      try {
+        await runJob({ etapa: 'short', args: [join(SCRIPTS_DIR, 'gerar_short.mjs'), roteiroPath], env });
+      } catch (e) {
+        return json(res, statusDeErroJob(e), { erro: e.message });
+      }
+      const arquivo = `${slug}-short-${String(body.width ?? 1080)}x${String(body.height ?? 1920)}.mp4`;
       return json(res, 200, { ok: true, output_path: arquivo, url: `/media/${slug}/${arquivo}` });
     }
 

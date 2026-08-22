@@ -8,6 +8,7 @@ import { limparProjetosAntigosHtmlVideo } from './util.mjs';
 const execFileAsync = promisify(execFile);
 const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
 const MONTA_VIDEO = join(SCRIPTS_DIR, 'montar_video.mjs');
+const GERAR_SHORT = join(SCRIPTS_DIR, 'gerar_short.mjs');
 
 async function rodarNode(script, args) {
   const { stdout, stderr } = await execFileAsync(process.execPath, [join(SCRIPTS_DIR, script), ...args], {
@@ -72,27 +73,34 @@ async function main() {
 
   // Etapa 1: Roteiro
   if (process.env.PULAR_ROTEIRO === '1' && existsSync(roteiroPath)) {
-    console.log('[1/4] Roteiro já existe, pulando.');
+    console.log('[1/5] Roteiro já existe, pulando.');
   } else {
-    console.log(`[1/4] Gerando roteiro para: ${topico}`);
+    console.log(`[1/5] Gerando roteiro para: ${topico}`);
     await rodarNode('gerar_roteiro.mjs', [topico]);
   }
 
   // Etapa 2: Imagens (ComfyUI)
   const imagensOk = await rodarComRetry(() => rodarNode('gerar_imagens.mjs', [roteiroPath]), 'Etapa 2 (imagens)');
-  console.log(`[2/4] ${JSON.parse(imagensOk).length} imagens geradas.`);
+  console.log(`[2/5] ${JSON.parse(imagensOk).length} imagens geradas.`);
 
   // Etapa 3: Narração (qwen)
   const narracaoOk = await rodarComRetry(() => rodarNode('gerar_narracao.mjs', [roteiroPath]), 'Etapa 3 (narração)');
-  console.log(`[3/4] ${JSON.parse(narracaoOk).length} arquivos de narração gerados.`);
+  console.log(`[3/5] ${JSON.parse(narracaoOk).length} arquivos de narração gerados.`);
 
   // Etapa 4: Vídeo (html-video)
-  console.log('[4/4] Montando vídeo ...');
+  console.log('[4/5] Montando vídeo ...');
   const result = await rodarComRetry(() => rodarNodeAbs(MONTA_VIDEO, [roteiroPath]), 'Etapa 4 (vídeo)');
   const parsed = JSON.parse(result);
-  console.log(`\n=== CONCLUÍDO ===`);
+  console.log(`\n=== VÍDEO CONCLUÍDO ===`);
   console.log(`Aula: ${topico}`);
   console.log(`Vídeo: ${parsed.output_path}`);
+
+  // Etapa 5: YouTube Short (vertical 9:16)
+  console.log('[5/5] Gerando YouTube Short ...');
+  const shortResult = await rodarComRetry(() => rodarNodeAbs(GERAR_SHORT, [roteiroPath]), 'Etapa 5 (Short)');
+  const shortParsed = JSON.parse(shortResult);
+  console.log(`\n=== SHORT CONCLUÍDO ===`);
+  console.log(`Short: ${shortParsed.output_path}`);
 
   try {
     const removidos = await limparProjetosAntigosHtmlVideo(join(SCRIPTS_DIR, '..'));

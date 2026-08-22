@@ -139,8 +139,16 @@ a.btn { display: inline-block; text-decoration: none; }
   background: rgba(11, 19, 32, 0.85); color: var(--texto-3); font-size: 15px;
   opacity: 0; transition: opacity 0.15s ease, color 0.15s ease;
 }
-.card-thumb-wrap:hover .btn-excluir { opacity: 1; }
+.btn-renomear {
+  position: absolute; top: 8px; right: 48px;
+  width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--borda);
+  background: rgba(11, 19, 32, 0.85); color: var(--texto-3); font-size: 14px;
+  opacity: 0; transition: opacity 0.15s ease, color 0.15s ease;
+}
+.card-thumb-wrap:hover .btn-excluir,
+.card-thumb-wrap:hover .btn-renomear { opacity: 1; }
 .btn-excluir:hover { color: var(--erro); border-color: var(--erro); }
+.btn-renomear:hover { color: var(--ouro); border-color: var(--ouro); }
 
 /* Download em vídeo / item de áudio */
 .video-rotulo { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--texto-3); margin-bottom: 8px; font-family: 'Cascadia Code', Consolas, monospace; }
@@ -352,7 +360,8 @@ a.btn { display: inline-block; text-decoration: none; }
 
 /* ---------- Log ---------- */
 .painel-log { margin-top: 26px; border-top: 1px solid var(--borda); padding-top: 10px; }
-.painel-log-topo { display: flex; justify-content: space-between; align-items: center; }
+.painel-log-topo { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.painel-log-acoes { display: flex; align-items: center; gap: 6px; }
 .log-linhas {
   margin-top: 10px; max-height: 260px; overflow-y: auto;
   background: var(--bg-alt); border: 1px solid var(--borda); border-radius: 10px;
@@ -361,11 +370,11 @@ a.btn { display: inline-block; text-decoration: none; }
 }
 .log-linhas.aberto { display: block; }
 .log-linha { white-space: pre-wrap; word-break: break-word; }
-.log-linha .hora { color: var(--texto-3); margin-right: 8px; }
+.log-linha .hora { color: var(--texto-3); margin-right: 8px; user-select: none; }
 .log-linha.log { color: var(--texto-2); }
 .log-linha.progress { color: var(--ouro-suave); }
 .log-linha.ok { color: var(--ok); }
-.log-linha.erro { color: var(--erro); }
+.log-linha.erro { color: var(--erro); background: rgba(239, 68, 68, 0.08); border-left: 2px solid var(--erro); padding-left: 6px; border-radius: 4px; }
 .log-linha.inicio { color: var(--texto-3); font-style: italic; }
 .log-linha.fim { color: var(--texto); font-weight: 600; }
 
@@ -380,6 +389,9 @@ a.btn { display: inline-block; text-decoration: none; }
   padding: 26px; width: 440px; max-width: 92vw; max-height: 88vh; overflow-y: auto;
   box-shadow: var(--sombra); display: flex; flex-direction: column; gap: 12px;
 }
+.modal-janela-larga { width: 780px; }
+.modal-header-flex { display: flex; justify-content: space-between; align-items: center; }
+.log-modal-conteudo { max-height: 55vh; min-height: 200px; display: block; }
 #modal-config .modal-janela { width: 520px; }
 .modal-janela h3 { margin-bottom: 4px; }
 .modal-janela label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: var(--texto-2); }
@@ -406,7 +418,14 @@ a.btn { display: inline-block; text-decoration: none; }
 .status-job.rodando { border-left-color: var(--ouro); }
 .status-job.ok { border-left-color: var(--ok); }
 .status-job.erro { border-left-color: var(--erro); }
-.status-job .status-cancelar { flex-shrink: 0; align-self: flex-start; }
+.status-job .status-cancelar, .status-job .status-ver-log { flex-shrink: 0; align-self: flex-start; }
+.status-job .status-ver-log { border-color: var(--erro); color: var(--erro); }
+.status-job .status-ver-log:hover { background: rgba(239, 68, 68, 0.15); }
+#btn-logs.tem-erro { color: var(--erro); position: relative; }
+#btn-logs.tem-erro::after {
+  content: ''; position: absolute; top: 6px; right: 6px; width: 7px; height: 7px;
+  background: var(--erro); border-radius: 50%; box-shadow: 0 0 6px var(--erro);
+}
 
 /* ---------- Modal fullscreen de slides ---------- */
 .modal-slide {

@@ -51,6 +51,17 @@ function postJson(url, body, { timeoutMs = 10 * 60 * 1000 } = {}) {
   });
 }
 
+async function postJsonComRetry(url, body, { timeoutMs = 10 * 60 * 1000, retries = 3 } = {}) {
+  for (let i = 1; i <= retries; i++) {
+    const resp = await postJson(url, body, { timeoutMs });
+    if (resp.status !== 503) return resp;
+    if (i === retries) throw new Error(`llama-server 503 após ${retries} tentativas`);
+    const espera = 5000 * i;
+    console.error(`  [retry] llama-server carregando modelo; aguardando ${espera / 1000}s (${i}/${retries})`);
+    await new Promise((r) => setTimeout(r, espera));
+  }
+}
+
 function extrairJson(content) {
   try {
     return JSON.parse(content.trim());
@@ -106,7 +117,7 @@ Conclusão: ${roteiro.conclusao}`;
 }
 
 async function gerarEnriquecimento(roteiro) {
-  const resp = await postJson(`${LLAMA_URL}/v1/chat/completions`, {
+  const resp = await postJsonComRetry(`${LLAMA_URL}/v1/chat/completions`, {
     model: modeloLLama(),
     messages: [
       { role: 'system', content: 'Você gera conteúdo complementar teológico para material de estudo.' },
