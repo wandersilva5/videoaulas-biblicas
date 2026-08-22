@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { readFile, writeFile, readdir, mkdir, unlink, rename, rm } from 'node:fs/promises';
-import { existsSync, createReadStream, statSync } from 'node:fs';
+import { existsSync, createReadStream, statSync, readFileSync } from 'node:fs';
 import { join, dirname, basename, extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -358,6 +358,21 @@ async function artefatos(slug) {
       tamanho: existsSync(pdfPath) ? statSync(pdfPath).size : 0,
       arquivo: `${slug}-estudo.pdf`,
     },
+    roteiro_short: (() => {
+      const p = join(outDir, 'roteiro-short.json');
+      if (!existsSync(p)) return { existe: false, mtime: null, tamanho: 0, narracao: '' };
+      try {
+        const r = JSON.parse(readFileSync(p, 'utf8'));
+        return {
+          existe: true,
+          mtime: mtimeDe(p),
+          tamanho: statSync(p).size,
+          narracao: r._short_narracao || r.introducao || '',
+        };
+      } catch {
+        return { existe: true, mtime: mtimeDe(p), tamanho: statSync(p).size, narracao: '' };
+      }
+    })(),
     audioCompleto: [itens[0], ...itens.slice(1, -1), itens[itens.length - 1]].every((it) => audioDe(it).existe),
     imagensCompletas: [intro, ...slides, conclusao].every((x) => x.imagem.existe),
   };
@@ -806,6 +821,28 @@ const server = createServer(async (req, res) => {
       return json(res, 200, body);
     }
 
+    // --- Roteiro Short (promocional para YouTube Short) ---
+    if (recurso === 'roteiro-short' && req.method === 'POST') {
+      if (!existsSync(roteiroPath)) return json(res, 404, { erro: 'Roteiro principal não existe' });
+      const body = await lerBody(req);
+      const materialPath = join(OUTPUT_DIR, slug, 'material.txt');
+      const args = [join(SCRIPTS_DIR, 'gerar_roteiro_short.mjs'), roteiroPath];
+      if (existsSync(materialPath)) args.push('--material', materialPath);
+      try {
+        await runJob({ etapa: 'roteiro-short', args });
+      } catch (e) {
+        return json(res, statusDeErroJob(e), { erro: e.message });
+      }
+      const roteiroShort = JSON.parse(await readFile(join(OUTPUT_DIR, slug, 'roteiro-short.json'), 'utf8'));
+      return json(res, 200, { ok: true, roteiro_short: roteiroShort });
+    }
+
+    if (recurso === 'roteiro-short' && req.method === 'GET') {
+      const shortPath = join(OUTPUT_DIR, slug, 'roteiro-short.json');
+      if (!existsSync(shortPath)) return json(res, 404, { erro: 'Roteiro do Short não existe' });
+      return json(res, 200, JSON.parse(await readFile(shortPath, 'utf8')));
+    }
+
     // --- Artefatos ---
     if (recurso === 'artefatos' && req.method === 'GET') {
       if (!existsSync(roteiroPath)) return json(res, 404, { erro: 'Roteiro não existe' });
@@ -943,6 +980,8 @@ const server = createServer(async (req, res) => {
     if (recurso === 'short' && req.method === 'POST') {
       const body = await lerBody(req);
       if (!existsSync(roteiroPath)) return json(res, 404, { erro: 'Roteiro não existe' });
+      const roteiroShortPath = join(OUTPUT_DIR, slug, 'roteiro-short.json');
+      if (!existsSync(roteiroShortPath)) return json(res, 400, { erro: 'Roteiro do Short não existe. Gere o Roteiro Short primeiro (etapa 5).' });
       const st = await artefatos(slug);
       const faltando = [];
       if (!st.imagensCompletas) faltando.push('imagens de todos os slides');
@@ -957,7 +996,7 @@ const server = createServer(async (req, res) => {
         VIDEO_PADDING: String(body.padding ?? 0.2),
       };
       try {
-        await runJob({ etapa: 'short', args: [join(SCRIPTS_DIR, 'gerar_short.mjs'), roteiroPath], env });
+        await runJob({ etapa: 'short', args: [join(SCRIPTS_DIR, 'gerar_short.mjs'), roteiroShortPath], env });
       } catch (e) {
         return json(res, statusDeErroJob(e), { erro: e.message });
       }

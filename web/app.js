@@ -5,9 +5,10 @@ const ETAPAS = [
   { n: 2, rotulo: 'Imagens' },
   { n: 3, rotulo: 'Narração' },
   { n: 4, rotulo: 'Vídeo' },
-  { n: 5, rotulo: 'Short' },
-  { n: 6, rotulo: 'PDF' },
-  { n: 7, rotulo: 'Questionário' },
+  { n: 5, rotulo: 'Roteiro Short' },
+  { n: 6, rotulo: 'Short' },
+  { n: 7, rotulo: 'PDF' },
+  { n: 8, rotulo: 'Questionário' },
 ];
 
 const estado = {
@@ -24,7 +25,7 @@ const estado = {
   logs: [],
 };
 
-const NOME_ETAPA = { roteiro: 'Roteiro', imagens: 'Imagens', narracao: 'Narração', video: 'Vídeo', short: 'Short', pdf: 'PDF', questionario: 'Questionário' };
+const NOME_ETAPA = { roteiro: 'Roteiro', imagens: 'Imagens', narracao: 'Narração', video: 'Vídeo', 'roteiro-short': 'Roteiro Short', short: 'Short', pdf: 'PDF', questionario: 'Questionário' };
 
 // Cópia browser-safe de esc/slugDe (util.mjs não pode ser importado no navegador:
 // depende de node:crypto). Mantidas em sincronia com scripts/util.mjs.
@@ -245,8 +246,12 @@ function statusEtapa(n) {
   }
   if (n === 3) return st.audioCompleto ? 'ok' : 'alerta';
   if (n === 4) return st.video.existe ? 'ok' : 'erro';
-  if (n === 5) return st.short?.existe ? 'ok' : 'erro';
-  if (n === 6) return st.pdf?.existe ? 'ok' : 'erro';
+  if (n === 5) {
+    const shortRoteiro = st.roteiro_short?.existe;
+    return shortRoteiro ? 'ok' : 'erro';
+  }
+  if (n === 6) return st.short?.existe ? 'ok' : 'erro';
+  if (n === 7) return st.pdf?.existe ? 'ok' : 'erro';
   return st.questionario?.existe ? 'ok' : 'erro';
 }
 
@@ -282,7 +287,8 @@ function mudarEtapa(n) {
   else if (n === 4) renderEtapa4(container);
   else if (n === 5) renderEtapa5(container);
   else if (n === 6) renderEtapa6(container);
-  else renderEtapa7(container);
+  else if (n === 7) renderEtapa7(container);
+  else renderEtapa8(container);
   sincronizarBotoes();
   renderStatusJob();
 }
@@ -726,9 +732,40 @@ function setProgressoVideo(pct, texto, etapa = 4) {
 }
 
 // ---------------------------------------------------------------------------
-// Etapa 5 — YouTube Short
+// ---------------------------------------------------------------------------
+// Etapa 5 — Roteiro Short (promocional via LLM)
 // ---------------------------------------------------------------------------
 function renderEtapa5(el) {
+  const st = estado.artefatos;
+  const shortRoteiro = st.roteiro_short;
+
+  const shortRoteiroHtml = shortRoteiro?.existe
+    ? `
+      <div class="cartao">
+        <h4 style="color:var(--dourado); margin-bottom:10px">Roteiro promocional do Short</h4>
+        <textarea readonly style="width:100%; min-height:150px; font-family:monospace; font-size:14px; background:#0d1b2a; color:#dce5ef; border:1px solid rgba(224,180,90,0.3); border-radius:8px; padding:12px; resize:vertical;">${esc(shortRoteiro.narracao || shortRoteiro.introducao || '')}</textarea>
+        <p class="msg-progresso" style="margin-top:10px">Gerado em ${new Date(shortRoteiro.mtime).toLocaleString('pt-BR')}</p>
+      </div>`
+    : '<p class="msg-progresso" style="color:var(--alerta)">Roteiro do Short ainda não gerado.</p>';
+
+  const problemas = [];
+  if (!st.video?.existe) problemas.push('vídeo principal não gerado (etapa 4)');
+  const pode = problemas.length === 0;
+
+  el.innerHTML = `
+    <div class="etapa-topo">
+      <h3>Roteiro do Short (Promocional)</h3>
+      <button class="btn btn-primario" data-action="gerar-roteiro-short" ${pode ? '' : 'disabled'}>🤖 Gerar via LLM</button>
+    </div>
+    ${pode ? '' : `<p class="msg-progresso" style="color:var(--alerta)">⚠ ${problemas.join(' · ')}</p>`}
+    <p class="msg-progresso">Gera um roteiro promocional otimizado para Shorts (hook → problema → valor → autoridade → CTA) via llama-server. O texto tem ~150 palavras para ~55s de narração.</p>
+    ${shortRoteiroHtml}`;
+}
+
+// ---------------------------------------------------------------------------
+// Etapa 6 — YouTube Short
+// ---------------------------------------------------------------------------
+function renderEtapa6(el) {
   const st = estado.artefatos;
   const short = st.short;
 
@@ -794,11 +831,12 @@ function renderEtapa5(el) {
     </div>
     ${shortHtml}
     ${videos}`;
+}
 
 // ---------------------------------------------------------------------------
-// Etapa 6 — PDF de estudo
+// Etapa 7 — PDF de estudo
 // ---------------------------------------------------------------------------
-function renderEtapa6(el) {
+function renderEtapa7(el) {
   const st = estado.artefatos;
   const pdf = st.pdf;
   const pdfHtml = pdf?.existe
@@ -825,9 +863,9 @@ function renderEtapa6(el) {
 }
 
 // ---------------------------------------------------------------------------
-// Etapa 7 — Vídeo de Questionário
+// Etapa 8 — Vídeo de Questionário
 // ---------------------------------------------------------------------------
-function renderEtapa7(el) {
+function renderEtapa8(el) {
   const st = estado.artefatos;
   const quiz = st.questionario;
 
@@ -1074,6 +1112,16 @@ $('#etapa-container').addEventListener('click', async (ev) => {
     return rodarJob(
       api(`/api/video/${estado.slug}`, { method: 'POST', body: JSON.stringify({ fps: Number(fps), width: Number(w), height: Number(h), padding: Number(padding) }) }),
       'Vídeo montado com sucesso!',
+    );
+  }
+  if (acao === 'gerar-roteiro-short') {
+    if (estado.servicos && !servicoOk('llama')) {
+      return toast('llama-server indisponível — não é possível gerar roteiro do Short.', true);
+    }
+    if (!confirm('Gerar roteiro promocional do Short via LLM? O modelo vai criar um texto otimizado com hook, valor e CTA para o canal.')) return;
+    return rodarJob(
+      api(`/api/roteiro-short/${estado.slug}`, { method: 'POST' }),
+      'Roteiro do Short gerado com sucesso!',
     );
   }
   if (acao === 'gerar-short') {
@@ -1475,10 +1523,11 @@ sse.addEventListener('progresso', (ev) => {
     estado.jobAtivo = false;
     sincronizarBotoes();
     atualizarIndicadorTopo(false);
-    if (estado.etapa === 4 || estado.etapa === 5) {
+    if (estado.etapa === 4 || estado.etapa === 5 || estado.etapa === 6) {
+      const textoOk = estado.etapa === 4 ? 'Vídeo pronto!' : (estado.etapa === 5 ? 'Roteiro Short pronto!' : 'Short pronto!');
       setProgressoVideo(
         msg.ok ? 100 : 0,
-        msg.ok ? (estado.etapa === 4 ? 'Vídeo pronto!' : 'Short pronto!') : 'Falha na montagem',
+        msg.ok ? textoOk : 'Falha na montagem',
         estado.etapa
       );
     }
@@ -1511,10 +1560,11 @@ sse.addEventListener('progresso', (ev) => {
       }
     }, 400);
   }
-  if ((msg.etapa === 'video' || msg.etapa === 'short' || msg.etapa === 'questionario') && msg.tipo === 'progress' && (estado.etapa === 4 || estado.etapa === 5 || estado.etapa === 7)) {
+  if ((msg.etapa === 'video' || msg.etapa === 'roteiro-short' || msg.etapa === 'short' || msg.etapa === 'questionario') && msg.tipo === 'progress' && (estado.etapa === 4 || estado.etapa === 5 || estado.etapa === 6 || estado.etapa === 8)) {
     const m = /\((\d+)%\)/.exec(msg.linha);
     if (estado.etapa === 4 && msg.etapa === 'video') setProgressoVideo(m ? Number(m[1]) : 0, msg.linha, 4);
-    if (estado.etapa === 5 && msg.etapa === 'short') setProgressoVideo(m ? Number(m[1]) : 0, msg.linha, 5);
+    if (estado.etapa === 5 && msg.etapa === 'roteiro-short') setProgressoVideo(m ? Number(m[1]) : 0, msg.linha, 5);
+    if (estado.etapa === 6 && msg.etapa === 'short') setProgressoVideo(m ? Number(m[1]) : 0, msg.linha, 6);
   }
   adicionarLog(msg);
 });

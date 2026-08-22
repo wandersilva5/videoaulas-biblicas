@@ -1,14 +1,13 @@
 /**
  * gerar_short.mjs — Gera um YouTube Short (vertical 9:16, <60s) a partir
- * de uma videoaula existente, usando os mesmos assets (imagens + narração).
+ * de um roteiro promocional próprio (roteiro-short.json) com narração otimizada para Shorts.
  *
- * Estratégia:
- *  - Usa a introdução, 3-4 slides-chave (os primeiros) e a conclusão
- *  - Narração condensada: intro + resumo dos pontos + conclusão
- *  - Layout vertical otimizado para Shorts (texto maior, animações rápidas)
- *  - Música de fundo opcional
+ * O roteiro do short contém:
+ *  - introducao: narração completa do short (hook → problema → valor → autoridade → CTA)
+ *  - slides: vazio (o short é uma peça única, não slide a slide)
+ *  - imagens: usa capa de abertura (slide-00.png) + imagens dos primeiros slides do curso + capa de encerramento
  *
- * Uso: node gerar_short.mjs <caminho/roteiro.json>
+ * Uso: node gerar_short.mjs <caminho/roteiro-short.json>
  */
 import { readFile, writeFile, mkdir, copyFile } from 'node:fs/promises';
 import { join, dirname, basename } from 'node:path';
@@ -39,7 +38,6 @@ const MUSICA_VOLUME_DB = Number(process.env.MUSICA_VOLUME_DB || -20);
 const MUSICA_FADE_IN_SEC = Number(process.env.MUSICA_FADE_IN_SEC || 1);
 
 const MAX_DURACAO_SHORT = 58;
-const MAX_SLIDES_SHORT = 4;
 
 const s = (v) => (v * (WIDTH / 1080)).toFixed(1);
 
@@ -115,33 +113,25 @@ function gerarFrameShortIntro(roteiro, imagePath) {
 </html>`;
 }
 
-function gerarFrameShortSlide(slide, imagePath, numero, total, tituloAula) {
+function gerarFrameShortConteudo(roteiro, imagePath, textoVisivel) {
   const imgName = basename(imagePath);
-  const pontos = (slide.pontos || []).slice(0, 3).map((p) => `<li>${esc(p)}</li>`).join('');
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>${esc(slide.titulo)}</title>
+<title>Short Conteúdo</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { width: ${WIDTH}px; height: ${HEIGHT}px; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; position: relative; background: #0d1b2a; }
   .bg { position: absolute; inset: 0; }
   .bg img { width: 100%; height: 100%; object-fit: cover; }
   .veil { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(13,27,42,0.15) 0%, rgba(13,27,42,0.4) 45%, rgba(13,27,42,0.85) 100%); }
-  .content { position: absolute; inset: 0; padding: ${s(60)}px ${s(60)}px; display: flex; flex-direction: column; justify-content: flex-end; }
+  .content { position: absolute; inset: 0; padding: ${s(60)}px ${s(60)}px; display: flex; flex-direction: column; justify-content: center; }
   .card { background: linear-gradient(160deg, rgba(13,27,42,0.82) 0%, rgba(13,27,42,0.65) 100%); border: 1px solid rgba(224,180,90,0.35); border-radius: ${s(24)}px; padding: ${s(36)}px ${s(48)}px; max-width: ${s(940)}px; box-shadow: 0 8px 40px rgba(0,0,0,0.5); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
   .kicker { font-size: ${s(24)}px; letter-spacing: ${s(4)}px; text-transform: uppercase; color: #e0b45a; font-weight: 700; margin-bottom: ${s(12)}px; opacity: 0; animation: fadeUp 0.4s ease-out 0.1s forwards; }
-  h1 { font-size: ${s(58)}px; color: #ffffff; font-weight: 700; line-height: 1.1; max-width: ${s(880)}px; margin-bottom: ${s(20)}px; text-shadow: 0 3px 18px rgba(0,0,0,0.55); opacity: 0; animation: fadeUp 0.5s ease-out 0.2s forwards; }
-  ul { list-style: none; display: flex; flex-direction: column; gap: ${s(12)}px; }
-  li { font-size: ${s(28)}px; color: #eef3f9; padding-left: ${s(30)}px; position: relative; max-width: ${s(880)}px; line-height: 1.25; opacity: 0; animation: fadeUp 0.4s ease-out forwards; }
-  li::before { content: '▸'; position: absolute; left: 0; color: #e0b45a; }
-  li:nth-child(1) { animation-delay: 0.3s; }
-  li:nth-child(2) { animation-delay: 0.5s; }
-  li:nth-child(3) { animation-delay: 0.7s; }
+  .texto { font-size: ${s(42)}px; color: #ffffff; font-weight: 500; line-height: 1.2; text-shadow: 0 3px 18px rgba(0,0,0,0.55); opacity: 0; animation: fadeUp 0.5s ease-out 0.2s forwards; }
   .foot { position: absolute; top: 0; left: 0; right: 0; padding: ${s(30)}px ${s(60)}px; display: flex; justify-content: space-between; align-items: center; color: rgba(255,255,255,0.75); font-size: ${s(20)}px; letter-spacing: ${s(2)}px; }
   .foot .brand { color: #e0b45a; font-weight: 700; text-transform: uppercase; letter-spacing: ${s(4)}px; background: linear-gradient(90deg, rgba(13,27,42,0.85) 0%, rgba(13,27,42,0.55) 60%, rgba(13,27,42,0) 100%); border-left: ${s(4)}px solid #e0b45a; padding: ${s(10)}px ${s(20)}px; border-radius: ${s(8)}px; text-shadow: 0 2px 8px rgba(0,0,0,0.8); }
-  .foot .counter { font-weight: 600; background: rgba(13,27,42,0.75); padding: ${s(6)}px ${s(14)}px; border-radius: ${s(8)}px; text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
   @keyframes fadeUp { from { opacity: 0; transform: translateY(${s(20)}px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 </head>
@@ -149,14 +139,12 @@ function gerarFrameShortSlide(slide, imagePath, numero, total, tituloAula) {
   <div class="bg"><img src="${esc(imgName)}" /></div>
   <div class="veil"></div>
   <div class="foot">
-    <span class="brand">${esc(tituloAula)}</span>
-    <span class="counter">${numero} / ${total}</span>
+    <span class="brand">${esc(roteiro.titulo_aula)}</span>
   </div>
   <div class="content">
     <div class="card">
       <div class="kicker">Teologia Básica</div>
-      <h1>${esc(slide.titulo)}</h1>
-      <ul>${pontos}</ul>
+      <div class="texto">${esc(textoVisivel)}</div>
     </div>
   </div>
 </body>
@@ -199,57 +187,67 @@ function gerarFrameShortOutro(imagePath) {
 </html>`;
 }
 
-function criarNarracaoCondensada(roteiro) {
-  const slidesSelecionados = roteiro.slides.slice(0, MAX_SLIDES_SHORT);
-  
-  let narracao = roteiro.introducao + ' ';
-  
-  for (const slide of slidesSelecionados) {
-    narracao += slide.narracao + ' ';
+function dividirNarracaoEmSegmentos(narracao, numSegmentos) {
+  const palavras = narracao.trim().split(/\s+/);
+  const porSegmento = Math.ceil(palavras.length / numSegmentos);
+  const segmentos = [];
+  for (let i = 0; i < numSegmentos; i++) {
+    const ini = i * porSegmento;
+    const fim = Math.min(ini + porSegmento, palavras.length);
+    if (ini >= fim) break;
+    segmentos.push(palavras.slice(ini, fim).join(' '));
   }
-  
-  narracao += roteiro.conclusao;
-  
-  return narracao.trim();
+  return segmentos;
 }
 
 async function main() {
   const roteiroPath = process.argv[2];
   if (!roteiroPath) {
-    console.error('Uso: node gerar_short.mjs <caminho/roteiro.json>');
+    console.error('Uso: node gerar_short.mjs <caminho/roteiro-short.json>');
     process.exit(1);
   }
   const roteiro = JSON.parse(await readFile(roteiroPath, 'utf8'));
   const outDir = dirname(roteiroPath);
   const slug = roteiro.slug || basename(outDir);
 
-  console.error('[Short] Gerando YouTube Short ...');
+  console.error('[Short] Gerando YouTube Short promocional ...');
 
-  const slidesSelecionados = roteiro.slides.slice(0, MAX_SLIDES_SHORT);
-  const totalFrames = slidesSelecionados.length + 2;
-
-  const audios = [];
-  const textos = [
-    { id: 'intro', texto: roteiro.introducao },
-    ...slidesSelecionados.map((s) => ({ id: s.id, titulo: s.titulo, texto: s.narracao })),
-    { id: 'conclusao', texto: roteiro.conclusao },
-  ];
-
-  for (let i = 0; i < textos.length; i++) {
-    const prefix = prefixoNarracao(i, textos.length);
-    const path = join(outDir, `${prefix}-narracao.mp3`);
-    if (!existsSync(path)) throw new Error(`Narração não encontrada: ${path}`);
-    const durationSec = await medirDuracaoMp3(path);
-    audios.push({ id: textos[i].id, path, durationSec });
-    console.error(`  narração ${i + 1}/${textos.length}: ${durationSec.toFixed(1)}s`);
+  const narracaoCompleta = roteiro._short_narracao || roteiro.introducao;
+  if (!narracaoCompleta || !narracaoCompleta.trim()) {
+    throw new Error('Roteiro do short não contém narração (_short_narracao ou introducao)');
   }
 
-  const narracaoFull = join(outDir, 'short-narracao-full.mp3');
-  await concatAudios(audios, narracaoFull);
+  const roteiroOriginalPath = join(outDir, 'roteiro.json');
+  const roteiroOriginal = existsSync(roteiroOriginalPath) ? JSON.parse(await readFile(roteiroOriginalPath, 'utf8')) : null;
 
-  const fullDuration = audios.reduce((sum, a) => sum + a.durationSec, 0) + SLIDE_PADDING_SEC * (audios.length - 1);
-  if (fullDuration > MAX_DURACAO_SHORT) {
-    console.error(`  Aviso: duração total (${fullDuration.toFixed(1)}s) excede ${MAX_DURACAO_SHORT}s do Short.`);
+  const numSegmentosVisuais = 3;
+  const segmentosTexto = dividirNarracaoEmSegmentos(narracaoCompleta, numSegmentosVisuais);
+
+  const tempNarracaoDir = join(outDir, '.short-narracao');
+  await mkdir(tempNarracaoDir, { recursive: true });
+
+  const { gerarNarracaoItem } = await import('./gerar_narracao.mjs');
+  const audios = [];
+
+console.error('  Gerando narração do short via TTS...');
+  const narracaoItem = {
+    id: 'short-full',
+    titulo: 'Narração completa do Short',
+    texto: narracaoCompleta,
+    prefix: 'short-full',
+  };
+  const narracaoPath = join(tempNarracaoDir, `${narracaoItem.prefix}-narracao.mp3`);
+  await gerarNarracaoItem(narracaoItem, tempNarracaoDir);
+
+  if (!existsSync(narracaoPath)) {
+    throw new Error('Falha ao gerar narração do short');
+  }
+
+  const duracaoTotal = await medirDuracaoMp3(narracaoPath);
+  console.error(`  Narração gerada: ${duracaoTotal.toFixed(1)}s`);
+
+  if (duracaoTotal > MAX_DURACAO_SHORT) {
+    console.error(`  Aviso: duração (${duracaoTotal.toFixed(1)}s) excede ${MAX_DURACAO_SHORT}s do Short.`);
   }
 
   const projectRoot = HTML_VIDEO_ROOT;
@@ -272,17 +270,20 @@ async function main() {
     },
   });
 
-  const nodes = [
-    { id: 'intro', kind: 'text', label: 'Introdução', durationSec: audios[0].durationSec + SLIDE_PADDING_SEC },
-  ];
+  const nodes = [];
   const edges = [];
-  for (let i = 0; i < slidesSelecionados.length; i++) {
-    nodes.push({ id: slidesSelecionados[i].id, kind: 'text', label: slidesSelecionados[i].titulo, durationSec: audios[i + 1].durationSec + SLIDE_PADDING_SEC });
-    edges.push({ from: i === 0 ? 'intro' : slidesSelecionados[i - 1].id, to: slidesSelecionados[i].id, kind: 'sequence' });
+
+  const durIntro = Math.max(3, duracaoTotal * 0.15);
+  const durConteudo = Math.max(3, (duracaoTotal - durIntro - 3) / numSegmentosVisuais);
+  const durOutro = Math.max(3, duracaoTotal * 0.15);
+
+  nodes.push({ id: 'intro', kind: 'text', label: 'Intro', durationSec: durIntro + SLIDE_PADDING_SEC });
+  for (let i = 0; i < numSegmentosVisuais; i++) {
+    nodes.push({ id: `conteudo-${i}`, kind: 'text', label: `Conteúdo ${i + 1}`, durationSec: durConteudo + SLIDE_PADDING_SEC });
+    edges.push({ from: i === 0 ? 'intro' : `conteudo-${i - 1}`, to: `conteudo-${i}`, kind: 'sequence' });
   }
-  const conclIdx = slidesSelecionados.length + 1;
-  nodes.push({ id: 'conclusao', kind: 'text', label: 'Conclusão', durationSec: audios[conclIdx].durationSec + SLIDE_PADDING_SEC });
-  edges.push({ from: slidesSelecionados[slidesSelecionados.length - 1].id, to: 'conclusao', kind: 'sequence' });
+  nodes.push({ id: 'outro', kind: 'text', label: 'Outro', durationSec: durOutro + SLIDE_PADDING_SEC });
+  edges.push({ from: `conteudo-${numSegmentosVisuais - 1}`, to: 'outro', kind: 'sequence' });
 
   const graph = { schemaVersion: 1, intent: 'short', synopsis: `Short: ${roteiro.titulo_aula}`, nodes, edges };
   await orchestrator.writeContentGraph(project.id, graph);
@@ -297,26 +298,36 @@ async function main() {
   await copyFile(capaIntro, capaIntroDest);
   await orchestrator.writeFrameHtml(project.id, 'intro', gerarFrameShortIntro(roteiro, capaIntroDest));
 
-  for (let i = 0; i < slidesSelecionados.length; i++) {
-    const slide = slidesSelecionados[i];
-    const imgPath = join(outDir, padFrame(i + 1));
-    if (!existsSync(imgPath)) throw new Error(`Imagem do slide não encontrada: ${imgPath}`);
-    const imgDest = join(framesDir, padFrame(i + 1));
-    await copyFile(imgPath, imgDest);
+  const slidesParaUsar = roteiroOriginal?.slides?.slice(0, numSegmentosVisuais) || [];
+  for (let i = 0; i < numSegmentosVisuais; i++) {
+    const imgIdx = i + 1;
+    const imgPath = join(outDir, padFrame(imgIdx));
+    if (!existsSync(imgPath)) {
+      console.error(`  Aviso: imagem ${imgPath} não encontrada, usando capa de intro`);
+      await copyFile(capaIntro, join(framesDir, padFrame(imgIdx)));
+    } else {
+      await copyFile(imgPath, join(framesDir, padFrame(imgIdx)));
+    }
+    const textoSegmento = segmentosTexto[i] || '';
     await orchestrator.writeFrameHtml(
       project.id,
-      slide.id,
-      gerarFrameShortSlide(slide, imgDest, i + 1, slidesSelecionados.length, roteiro.titulo_aula),
+      `conteudo-${i}`,
+      gerarFrameShortConteudo(roteiro, join(framesDir, padFrame(imgIdx)), textoSegmento),
     );
   }
-  const capaConcl = join(outDir, padFrame(roteiro.slides.length + 1));
-  if (!existsSync(capaConcl)) throw new Error(`Imagem da conclusão não encontrada: ${capaConcl}`);
-  const capaConclDest = join(framesDir, padFrame(slidesSelecionados.length + 1));
-  await copyFile(capaConcl, capaConclDest);
-  await orchestrator.writeFrameHtml(project.id, 'conclusao', gerarFrameShortOutro(capaConclDest));
+
+  const capaConclIdx = roteiroOriginal?.slides?.length ? roteiroOriginal.slides.length + 1 : numSegmentosVisuais + 1;
+  const capaConcl = join(outDir, padFrame(capaConclIdx));
+  if (!existsSync(capaConcl)) {
+    console.error(`  Aviso: imagem de conclusão não encontrada (${capaConcl}), usando slide-00`);
+    await copyFile(capaIntro, join(framesDir, padFrame(numSegmentosVisuais + 1)));
+  } else {
+    await copyFile(capaConcl, join(framesDir, padFrame(numSegmentosVisuais + 1)));
+  }
+  await orchestrator.writeFrameHtml(project.id, 'outro', gerarFrameShortOutro(join(framesDir, padFrame(numSegmentosVisuais + 1))));
 
   const assetsProjeto = [];
-  let proj = await orchestrator.addFileAsset(project.id, narracaoFull, 'Narração Short');
+  let proj = await orchestrator.addFileAsset(project.id, narracaoPath, 'Narração Short');
   assetsProjeto.push(proj.assets[proj.assets.length - 1]);
   if (MUSICA_FUNDO && existsSync(MUSICA_FUNDO)) {
     console.error(`  música de fundo: ${MUSICA_FUNDO} (${MUSICA_VOLUME_DB} dB, fade in ${MUSICA_FADE_IN_SEC}s)`);
