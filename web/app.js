@@ -1344,30 +1344,8 @@ $('#lista-aulas').addEventListener('click', async (ev) => {
   }
 });
 
-$('#btn-nova-aula').onclick = async () => {
-  const topico = $('#input-topico').value.trim();
-  if (!topico) return toast('Digite um tópico.', true);
-  const slug = slugDe(topico);
-  try {
-    const aulas = await api('/api/aulas');
-    if (aulas.some(a => a.slug === slug)) {
-      return toast(`Já existe uma aula com este tópico ("${slug}").`, true);
-    }
-    if (estado.servicos && !servicoOk('llama')) {
-      toast('llama-server indisponível — o roteiro não será gerado. Inicie-o antes.', true);
-      return;
-    }
-    const res = await api('/api/roteiro', { method: 'POST', body: JSON.stringify({ topico }) });
-    $('#input-topico').value = '';
-    await abrirAula(res.slug);
-    toast('Roteiro gerado! Revise o texto na etapa Roteiro.');
-  } catch (e) {
-    toast(e.message, true);
-  }
-};
-$('#input-topico').addEventListener('keydown', (ev) => {
-  if (ev.key === 'Enter') $('#btn-nova-aula').click();
-});
+// ---- Formulário Nova Aula ----
+let ctxTabAtiva = 'assunto';
 
 function arquivoParaBase64(arquivo) {
   return new Promise((resolve, reject) => {
@@ -1378,36 +1356,111 @@ function arquivoParaBase64(arquivo) {
   });
 }
 
-$('#btn-nova-aula-pdf').onclick = async () => {
-  const inp = $('#input-pdf');
-  const arquivo = inp.files && inp.files[0];
-  if (!arquivo) return toast('Selecione um arquivo PDF.', true);
-  if (!/\.pdf$/i.test(arquivo.name)) return toast('O arquivo precisa ter extensão .pdf.', true);
-  let topico = $('#input-topico-pdf').value.trim();
-  if (!topico) {
-    topico = arquivo.name.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ').trim();
+function ativarCtxTab(tab) {
+  ctxTabAtiva = tab;
+  document.querySelectorAll('.ctx-tab').forEach((b) => b.classList.toggle('ativa', b.dataset.tab === tab));
+  document.querySelectorAll('.ctx-painel').forEach((p) => p.classList.toggle('oculto', true));
+  const painel = document.getElementById(`ctx-${tab}`);
+  if (painel) painel.classList.remove('oculto');
+}
+
+document.querySelectorAll('.ctx-tab').forEach((btn) => {
+  btn.addEventListener('click', () => ativarCtxTab(btn.dataset.tab));
+});
+
+// Drag-and-drop / clique na drop-area do PDF
+const dropArea = document.getElementById('pdf-drop-area');
+const pdfInput = document.getElementById('input-pdf');
+const pdfTexto = document.getElementById('pdf-drop-texto');
+
+function setPdfArquivo(arquivo) {
+  if (arquivo && /\.pdf$/i.test(arquivo.name)) {
+    pdfTexto.textContent = `📎 ${arquivo.name}`;
+    // guarda no input via DataTransfer para manter a referência
+    const dt = new DataTransfer();
+    dt.items.add(arquivo);
+    pdfInput.files = dt.files;
   }
-  if (!topico) return toast('Informe o título da aula ou renomeie o arquivo.', true);
-  const slug = slugDe(topico);
+}
+
+if (dropArea && pdfInput) {
+  dropArea.addEventListener('dragover', (e) => { e.preventDefault(); dropArea.classList.add('arrastando'); });
+  dropArea.addEventListener('dragleave', () => dropArea.classList.remove('arrastando'));
+  dropArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropArea.classList.remove('arrastando');
+    const arquivo = e.dataTransfer?.files?.[0];
+    if (arquivo) setPdfArquivo(arquivo);
+  });
+  pdfInput.addEventListener('change', () => {
+    const arquivo = pdfInput.files?.[0];
+    if (arquivo) setPdfArquivo(arquivo);
+  });
+}
+
+async function criarAula() {
+  const titulo = $('#input-titulo')?.value?.trim();
+  if (!titulo) return toast('Informe o título da aula.', true);
+  const slug = slugDe(titulo);
+
   try {
     const aulas = await api('/api/aulas');
     if (aulas.some((a) => a.slug === slug)) {
       return toast(`Já existe uma aula com este título ("${slug}").`, true);
     }
-    if (estado.servicos && !servicoOk('llama')) {
-      toast('llama-server indisponível — o roteiro não será gerado. Inicie-o antes.', true);
-      return;
+  } catch (_) {}
+
+  if (estado.servicos && !servicoOk('llama')) {
+    toast('llama-server indisponível — o roteiro não será gerado. Inicie-o antes.', true);
+    return;
+  }
+
+  let payload = { topico: titulo };
+
+  if (ctxTabAtiva === 'assunto') {
+    const assunto = $('#input-assunto')?.value?.trim();
+    if (assunto) payload.material = assunto;
+
+  } else if (ctxTabAtiva === 'pdf') {
+    const arquivo = pdfInput?.files?.[0];
+    if (!arquivo) return toast('Selecione um arquivo PDF.', true);
+    if (!/\.pdf$/i.test(arquivo.name)) return toast('O arquivo precisa ter extensão .pdf.', true);
+    try {
+      const base64 = await arquivoParaBase64(arquivo);
+      payload.pdf = { nome: arquivo.name, base64 };
+    } catch (e) {
+      return toast(`Erro ao ler o PDF: ${e.message}`, true);
     }
-    const base64 = await arquivoParaBase64(arquivo);
-    const res = await api('/api/roteiro', { method: 'POST', body: JSON.stringify({ topico, pdf: { nome: arquivo.name, base64 } }) });
-    inp.value = '';
-    $('#input-topico-pdf').value = '';
+
+  } else if (ctxTabAtiva === 'texto') {
+    const texto = $('#input-texto-contexto')?.value?.trim();
+    if (texto) payload.material = texto;
+  }
+
+  try {
+    const res = await api('/api/roteiro', { method: 'POST', body: JSON.stringify(payload) });
+    // limpar formulário
+    $('#input-titulo').value = '';
+    $('#input-assunto').value = '';
+    if (pdfInput) { pdfInput.value = ''; }
+    if (pdfTexto) pdfTexto.textContent = 'Clique ou arraste um PDF aqui';
+    if ($('#input-texto-contexto')) $('#input-texto-contexto').value = '';
+    ativarCtxTab('assunto');
     await abrirAula(res.slug);
-    toast(res.pdf ? `PDF importado (${res.pdf.paginas} páginas) — roteiro gerado a partir do material!` : 'Roteiro gerado!');
+    if (res.pdf) {
+      toast(`PDF importado (${res.pdf.paginas} páginas) — roteiro gerado a partir do material!`);
+    } else {
+      toast('Roteiro gerado! Revise o texto na etapa Roteiro.');
+    }
   } catch (e) {
     toast(e.message, true);
   }
-};
+}
+
+$('#btn-nova-aula').onclick = criarAula;
+$('#input-titulo')?.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') criarAula(); });
+
+
 
 $('#btn-voltar').onclick = () => mostrarTela('dashboard');
 $('#btn-inicio').onclick = () => mostrarTela('dashboard');

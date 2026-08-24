@@ -1,8 +1,8 @@
-file:///F:/codigos/videoaulas-teologia/scripts/servidor.mjs:1147
-  });
-   ^
+file:///F:/codigos/videoaulas-teologia/scripts/servidor.mjs:1140
+    return existsSync(fullPath) && (await stat(fullPath)).isDirectory();
+                                    ^^^^^
 
-SyntaxError: Unexpected token ')'
+SyntaxError: Unexpected reserved word
     at compileSourceTextModule (node:internal/modules/esm/utils:318:16)
     at ModuleLoader.moduleStrategy (node:internal/modules/esm/translators:90:18)
     at #translate (node:internal/modules/esm/loader:451:20)

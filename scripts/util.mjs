@@ -445,6 +445,23 @@ export function concatenarAudiosComGaps(audios, gaps, outPath) {
   });
 }
 
+/** Retorna os caminhos das subpastas de estudo para um diretório dado. */
+export function dirsEstudo(outDir) {
+  return {
+    imagens: join(outDir, 'imagens'),
+    audios:  join(outDir, 'audios'),
+    videos:  join(outDir, 'videos'),
+  };
+}
+
+/** Cria as 3 subpastas (imagens/, audios/, videos/) se não existirem. */
+export async function garantirDirsEstudo(outDir) {
+  const dirs = dirsEstudo(outDir);
+  for (const dir of Object.values(dirs)) {
+    await mkdir(dir, { recursive: true });
+  }
+}
+
 /** Mapa de extensão → Content-Type para servir arquivos. */
 export const MIME = {
   '.html': 'text/html; charset=utf-8',

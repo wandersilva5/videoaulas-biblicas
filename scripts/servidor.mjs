@@ -1127,6 +1127,64 @@ try {
 } catch (e) {
   console.error(`[cache] limpeza de projetos antigos falhou: ${e.message}`);
 }
+
+// --- Migração automática de estudos existentes ---
+try {
+  const outDir = OUTPUT_DIR;
+  if (!existsSync(outDir)) {
+    await mkdir(outDir, { recursive: true });
+  }
+  const studies = await readdir(outDir);
+  const studyDirs = [];
+  for (const f of studies) {
+    const fullPath = join(outDir, f);
+    try {
+      const st = await stat(fullPath);
+      if (st.isDirectory()) {
+        studyDirs.push(f);
+      }
+    } catch { /* ignore */ }
+  for (const slug of studyDirs) {
+    const studyPath = join(outDir, slug);
+    const existingManifest = join(studyPath, 'manifesto.json');
+    // Verifica se já tem as subpastas (já migrou)
+    const imagensDir = join(studyPath, 'imagens');
+    const audiosDir = join(studyPath, 'audios');
+    const videosDir = join(studyPath, 'videos');
+    const alreadyMigrated = existsSync(imagensDir) && existsSync(audiosDir) && existsSync(videosDir);
+    if (alreadyMigrated) {
+      console.error(`[migr] Estudo "${slug}" já migrado — pulando.`);
+      continue;
+    }
+    console.error(`[migr] Iniciando migração automática do estudo: ${slug}`);
+    // Mover arquivos da raiz para as subpastas
+    const files = await readdir(studyPath);
+    for (const f of files) {
+      const fullPath = join(studyPath, f);
+      const statResult = await stat(fullPath);
+      if (!statResult.isFile()) continue;
+      const basename = basename(f);
+      // slide-*.png -> imagens/
+      if (/^slide-\d{2}\.png$/.test(basename)) {
+        await rename(fullPath, join(imagensDir, basename));
+        console.error(`[migr] Movido: ${basename} -> imagens/`);
+      } else if (/-narracao\.mp3$/.test(basename)) {
+        // 00-intro-narracao.mp3, 01-narracao.mp3, NN-conclusao-narracao.mp3 -> audios/
+        await rename(fullPath, join(audiosDir, basename));
+        console.error(`[migr] Movido: ${basename} -> audios/`);
+      } else if (/-questionario-.+\\.mp3$/.test(basename) || /-questionario-narracao-full\.mp3/.test(basename)) {
+        await rename(fullPath, join(audiosDir, basename));
+        console.error(`[migr] Movido: ${basename} -> audios/`);
+      } else if (/.+\.mp4$/.test(basename)) {
+        // <slug>-1920x1080.mp4, <slug>-short-1080x1920.mp4, <slug>-questionario-1920x1080.mp4 -> videos/
+        await rename(fullPath, join(videosDir, basename));
+        console.error(`[migr] Movido: ${basename} -> videos/`);
+      }
+      // roteiro-short.json, manifesto.json, material.txt, fonte.pdf ficam na raiz (não movem)
+    }
+    // Se criou arquivos nas subpastas, tenta regenerar o manifesto se necessário
+    console.error(`[migr] Migração do estudo "${slug}" concluída.`);
+  }
 server.listen(Number(CONFIG.PORTA), () => {
   console.log(`Servidor rodando em http://localhost:${CONFIG.PORTA}`);
 });

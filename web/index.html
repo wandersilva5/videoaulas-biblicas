@@ -27,14 +27,39 @@
     <section id="tela-dashboard" class="tela ativa">
       <div class="container">
         <h1 class="titulo-pagina">Aulas</h1>
-        <div class="nova-aula">
-          <input id="input-topico" type="text" placeholder='Ex.: "A doutrina da Trindade"' />
-          <button class="btn btn-primario" id="btn-nova-aula">Criar nova aula</button>
-        </div>
-        <div class="nova-aula nova-aula-pdf">
-          <input id="input-pdf" type="file" accept="application/pdf,.pdf" />
-          <input id="input-topico-pdf" type="text" placeholder="Título da aula (opcional — se vazio, usa o nome do arquivo)" />
-          <button class="btn btn-primario" id="btn-nova-aula-pdf">📄 Importar PDF e criar aula</button>
+        <div class="form-nova-aula" id="form-nova-aula">
+          <div class="form-nova-aula-campos">
+            <div class="form-campo">
+              <label class="form-label" for="input-titulo">Título da aula</label>
+              <input id="input-titulo" type="text" class="form-input" placeholder='Ex.: "A doutrina da Trindade"' autocomplete="off" />
+            </div>
+            <div class="form-campo">
+              <div class="form-label-row">
+                <label class="form-label">Contexto <span class="form-label-opcional">(opcional)</span></label>
+                <div class="ctx-tabs" id="ctx-tabs">
+                  <button class="ctx-tab ativa" data-tab="assunto" id="tab-assunto" type="button">Assunto</button>
+                  <button class="ctx-tab" data-tab="pdf" id="tab-pdf" type="button">📄 PDF</button>
+                  <button class="ctx-tab" data-tab="texto" id="tab-texto" type="button">Texto</button>
+                </div>
+              </div>
+              <div class="ctx-painel" id="ctx-assunto">
+                <input id="input-assunto" type="text" class="form-input" placeholder='Ex.: "Foco em Calvino e a predestinação"' />
+              </div>
+              <div class="ctx-painel oculto" id="ctx-pdf">
+                <div class="pdf-drop-area" id="pdf-drop-area">
+                  <span class="pdf-drop-icone">📄</span>
+                  <span class="pdf-drop-texto" id="pdf-drop-texto">Clique ou arraste um PDF aqui</span>
+                  <input id="input-pdf" type="file" accept="application/pdf,.pdf" class="pdf-input-real" />
+                </div>
+              </div>
+              <div class="ctx-painel oculto" id="ctx-texto">
+                <textarea id="input-texto-contexto" class="form-textarea" rows="5" placeholder="Cole aqui o texto de referência para a aula..."></textarea>
+              </div>
+            </div>
+          </div>
+          <div class="form-nova-aula-rodape">
+            <button class="btn btn-primario btn-criar-aula" id="btn-nova-aula" type="button">✦ Criar aula</button>
+          </div>
         </div>
         <div id="lista-aulas" class="grid-aulas"></div>
       </div>

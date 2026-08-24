@@ -88,27 +88,77 @@ a.btn { display: inline-block; text-decoration: none; }
 
 .titulo-pagina { font-size: 26px; margin-bottom: 20px; color: var(--texto); }
 
-/* ---------- Nova aula ---------- */
-.nova-aula {
-  display: flex; gap: 10px; margin-bottom: 28px;
+/* ---------- Formulário Nova Aula ---------- */
+.form-nova-aula {
+  background: var(--painel);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  padding: 24px 28px 20px;
+  margin-bottom: 32px;
+  max-width: 740px;
 }
-.nova-aula input {
-  flex: 1; max-width: 560px;
-  background: var(--painel); border: 1px solid var(--borda);
+.form-nova-aula-campos { display: flex; flex-direction: column; gap: 18px; }
+.form-campo { display: flex; flex-direction: column; gap: 8px; }
+.form-label {
+  font-size: 13px; font-weight: 600; color: var(--texto-2);
+  letter-spacing: 0.4px; text-transform: uppercase;
+}
+.form-label-opcional { font-weight: 400; color: var(--texto-3); text-transform: none; font-size: 12px; }
+.form-label-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.form-input {
+  width: 100%;
+  background: var(--bg-alt); border: 1px solid var(--borda);
   color: var(--texto); border-radius: 10px; padding: 11px 14px;
-  outline: none;
+  outline: none; transition: border-color 0.18s;
 }
-.nova-aula input:focus { border-color: var(--borda-forte); }
+.form-input:focus { border-color: var(--borda-forte); }
+.form-textarea {
+  width: 100%; resize: vertical; min-height: 90px;
+  background: var(--bg-alt); border: 1px solid var(--borda);
+  color: var(--texto); border-radius: 10px; padding: 11px 14px;
+  outline: none; transition: border-color 0.18s; line-height: 1.55;
+}
+.form-textarea:focus { border-color: var(--borda-forte); }
 
-/* ---------- Importar PDF ---------- */
-.nova-aula-pdf {
-  border-top: 1px dashed var(--borda);
-  padding-top: 16px;
+/* Abas de contexto */
+.ctx-tabs { display: flex; gap: 4px; background: var(--bg); border-radius: 8px; padding: 3px; }
+.ctx-tab {
+  border: none; background: transparent; color: var(--texto-3);
+  border-radius: 6px; padding: 5px 12px; font-size: 13px; font-weight: 500;
+  transition: all 0.16s; cursor: pointer;
 }
-.nova-aula-pdf input[type="file"] {
-  flex: 0 0 auto; max-width: 280px;
-  padding: 8px 12px; font-size: 13px;
+.ctx-tab:hover { color: var(--texto-2); background: rgba(255,255,255,0.04); }
+.ctx-tab.ativa { background: var(--painel-2); color: var(--ouro); }
+
+.ctx-painel { animation: fadeIn 0.18s ease; }
+.ctx-painel.oculto { display: none; }
+
+/* Drop area PDF */
+.pdf-drop-area {
+  position: relative;
+  border: 1.5px dashed var(--borda-forte);
+  border-radius: 10px;
+  padding: 20px 24px;
+  display: flex; align-items: center; gap: 12px;
+  cursor: pointer; transition: all 0.18s;
+  background: var(--bg-alt);
 }
+.pdf-drop-area:hover { border-color: var(--ouro); background: rgba(224,180,90,0.05); }
+.pdf-drop-area.arrastando { border-color: var(--ouro); background: rgba(224,180,90,0.09); }
+.pdf-drop-icone { font-size: 24px; line-height: 1; }
+.pdf-drop-texto { color: var(--texto-2); font-size: 14px; }
+.pdf-input-real {
+  position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+}
+
+/* Rodapé do form */
+.form-nova-aula-rodape {
+  margin-top: 20px; padding-top: 16px;
+  border-top: 1px solid var(--borda);
+  display: flex; justify-content: flex-end;
+}
+.btn-criar-aula { padding: 10px 26px; font-size: 15px; }
+
 
 /* ---------- Grid de aulas ---------- */
 .grid-aulas {
