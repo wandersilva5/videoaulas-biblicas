@@ -257,7 +257,7 @@ async function main() {
     const pId = `${prefix}-pergunta`;
     const rId = `${prefix}-resposta`;
 
-    const durP = audios[offset + i * 2].durationSec + TIMER_GAP_SEC;
+    const durP = audios[offset + i * 2].durationSec; // duração da narração da pergunta (o timer de 10s é mostrado no frame)
     const durR = audios[offset + i * 2 + 1].durationSec + gaps[offset + i * 2 + 1];
 
     nodes.push({ id: pId, kind: 'text', label: `P${i+1}`, durationSec: durP });

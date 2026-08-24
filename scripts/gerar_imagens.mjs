@@ -98,7 +98,7 @@ export async function gerarImagensRoteiro(roteiro, outDir) {
   // Seeds preservados dos slides (SEED_BASE + i*137); capas usam seeds próprios.
   const pad = (n) => String(n).padStart(2, '0');
   const itens = [
-    { id: 'intro', rotulo: 'Introdução', prompt: imagemPromptIntro(roteiro), arquivo: 'slide-00.png', seed: SEED_BASE - 137 },
+    { id: 'intro', rotulo: 'Introdução', prompt: imagemPromptIntro(roteiro), arquivo: 'slide-00.png', seed: Math.max(0, SEED_BASE - 137) },
     ...roteiro.slides.map((s, i) => ({
       id: s.id,
       rotulo: s.titulo,

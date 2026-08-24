@@ -3,7 +3,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { request as httpRequest } from 'node:http';
-import { slugDe, modeloLLama } from './util.mjs';
+import { slugDe, modeloLLama, extrairJson } from './util.mjs';
 
 const LLAMA_URL = process.env.LLAMA_URL || 'http://127.0.0.1:8091';
 
@@ -46,26 +46,6 @@ async function postJsonComRetry(url, body, { timeoutMs = 15 * 60 * 1000, retries
     const espera = 5000 * i;
     console.error(`  [retry] llama-server carregando modelo; aguardando ${espera / 1000}s (${i}/${retries})`);
     await new Promise((r) => setTimeout(r, espera));
-  }
-}
-
-function extrairJson(content) {
-  try {
-    return JSON.parse(content.trim());
-  } catch {
-    const semFence = content
-      .replace(/```json/gi, '')
-      .replace(/```/g, '')
-      .trim();
-    const inicio = semFence.indexOf('{');
-    if (inicio === -1) {
-      throw new Error('Resposta do modelo não contém JSON válido.');
-    }
-    const fim = semFence.lastIndexOf('}');
-    if (fim === -1 || fim < inicio) {
-        throw new Error('JSON truncado retornado pelo modelo.');
-    }
-    return JSON.parse(semFence.slice(inicio, fim + 1));
   }
 }
 

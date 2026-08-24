@@ -14,6 +14,12 @@ const LOUDNORM_LIGADO = AUDIO_LOUDNORM && AUDIO_LOUDNORM !== '0' && AUDIO_LOUDNO
 // Qwen3-TTS (clone de voz local). Padrões vindos de util.mjs (qwenEnv).
 const QWEN = qwenEnv();
 
+/** Verifica se a engine Qwen está disponível (pasta existe + voz referência). */
+function qwenDisponivel() {
+  const engineDir = join(QWEN.QWEN_ROOT, QWEN.QWEN_MODEL || 'model-base');
+  return existsSync(engineDir) && existsSync(QWEN.QWEN_REF);
+}
+
 const ORDINAIS_LIVROS = { '1': 'Primeira', '2': 'Segunda', '3': 'Terceira' };
 
 /** Palavras com leitura corrigida (chave = forma exata no texto, valor = forma com tônica marcada). */
@@ -208,7 +214,15 @@ export async function gerarNarracaoItem(item, outDir) {
   for (let tentativa = 1; tentativa <= 2; tentativa++) {
     try {
       console.error(`  [narração] ${item.titulo} ...`);
+      let usaQwen = false;
       if (TTS === 'qwen') {
+        usaQwen = qwenDisponivel();
+        if (!usaQwen) {
+          console.error('  [narração] Qengine não disponível, usando edge-tts');
+          TTS = 'edge-tts'; // mudar para o próximo loop/iteração
+        }
+      }
+      if (usaQwen || TTS === 'qwen') {
         await ttsQwen(texto, outPath);
       } else {
         await tts(texto, outPath);

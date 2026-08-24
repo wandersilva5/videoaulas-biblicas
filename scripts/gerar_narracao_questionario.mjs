@@ -36,10 +36,37 @@ function normalizarNarracaoPergunta(texto) {
  * as opções; gerar cada parte separada faz o áudio seguir exatamente o texto.
  */
 function dividirPerguntaEmSegmentos(texto) {
-  return String(texto ?? '')
-    .split(/(?=Opção [ABC]:|Você tem \d+ segundos)/i)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const t = String(texto ?? '');
+  const segmentos = [];
+
+  // Extrai o aviso de tempo ("Você tem 10 segundos para responder.")
+  const avisoMatch = t.match(/Você tem \d+ segundos para responder\./i);
+  const temAviso = avisoMatch ? avisoMatch[0] : null;
+
+  // Remove o aviso para processar o restante
+  const resto = temAviso ? t.replace(temAviso, '').trim() : t;
+
+  // Separa "Pergunta número N: ..." das opções
+  const partes = resto.split(/Opção [ABC]: /i);
+  if (partes.length >= 2) {
+    // Primeira parte é a pergunta (sem as opções)
+    const pergunta = partes[0].trim();
+    if (pergunta) segmentos.push(pergunta);
+
+    // Restantes são opções
+    for (let i = 1; i < partes.length; i++) {
+      const opcao = partes[i].trim();
+      if (opcao) segmentos.push(opcao);
+    }
+  } else {
+    // Fallback: usa o texto todo como pergunta
+    segmentos.push(resto);
+  }
+
+  // Adiciona o aviso no final, se existir
+  if (temAviso) segmentos.push(temAviso);
+
+  return segmentos;
 }
 
 /** Pausa (s) entre os segmentos da pergunta no áudio final. */
@@ -91,7 +118,8 @@ function montarNarracaoPergunta(p) {
   const opcoes = (p.opcoes || [])
     .map((o, i) => `Opção ${'ABC'[i]}: ${String(o).replace(/^[A-C]\)\s*/i, '')}`)
     .join('. ');
-  return `Pergunta número ${p.numero}: ${p.pergunta} ${opcoes}. Você tem 10 segundos para responder.`;
+  const texto = `Pergunta número ${p.numero}: ${p.pergunta} ${opcoes}. Você tem 10 segundos para responder.`;
+  return normalizarNarracaoPergunta(texto);
 }
 
 /**

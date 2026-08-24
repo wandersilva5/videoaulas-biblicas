@@ -406,8 +406,8 @@ export function truncarMaterial(texto, max) {
   return `${t.slice(0, ini)}\n[... ${t.length - max} caracteres omitidos ...]\n${t.slice(-fim)}`;
 }
 
-/** Limite padrão de caracteres do material de apoio enviado ao llama (default seguro p/ n_ctx=8192). */
-export const MATERIAL_MAX_CHARS = Number(process.env.MATERIAL_MAX_CHARS) || 12000;
+/** Limite padrão de caracteres do material de apoio enviado ao llama (seguro para n_ctx 8192). */
+export const MATERIAL_MAX_CHARS = Number(process.env.MATERIAL_MAX_CHARS) || 8000;
 
 /**
  * Concatena arquivos de áudio com intervalos de silêncio entre eles (ffmpeg).
