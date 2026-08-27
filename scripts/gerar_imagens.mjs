@@ -10,7 +10,7 @@ const COMFY_OUTPUT_DIR = process.env.COMFY_OUTPUT_DIR || 'D:\\ComfyUI_windows_po
 const ANIMA_UNET = process.env.ANIMA_UNET || 'anima\\insight_a1.0.safetensors';
 const ANIMA_CLIP = process.env.ANIMA_CLIP || 'qwen\\qwen_3_06b_base.safetensors';
 const ANIMA_VAE = process.env.ANIMA_VAE || 'qwen_image_vae.safetensors';
-const ANIMA_LORA = process.env.ANIMA_LORA || 'Anima\\_kxwxkxt-v1-animabase1-ty_lee.safetensors';
+const ANIMA_LORA = process.env.ANIMA_LORA || 'Anima\\Disney Anima Alt.safetensors';
 // const ANIMA_LORA = process.env.ANIMA_LORA || 'Anima\\F2D-000003.safetensors';
 const ANIMA_STEPS = Number(process.env.ANIMA_STEPS || 10);
 const SEED_BASE = process.env.KREA2_SEED_BASE !== undefined && process.env.KREA2_SEED_BASE !== '' ? Number(process.env.KREA2_SEED_BASE) : 1000;
