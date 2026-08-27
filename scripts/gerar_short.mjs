@@ -15,7 +15,7 @@ import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { prefixoNarracao, esc, musicaFundo } from './util.mjs';
+import { prefixoNarracao, esc, musicaFundo, dirsEstudo, garantirDirsEstudo } from './util.mjs';
 import {
   AssetStore,
   EngineRegistry,
@@ -209,6 +209,8 @@ async function main() {
   const roteiro = JSON.parse(await readFile(roteiroPath, 'utf8'));
   const outDir = dirname(roteiroPath);
   const slug = roteiro.slug || basename(outDir);
+  await garantirDirsEstudo(outDir);
+  const { imagens: imagensDir, videos: videosDir } = dirsEstudo(outDir);
 
   console.error('[Short] Gerando YouTube Short promocional ...');
 
@@ -292,7 +294,7 @@ console.error('  Gerando narração do short via TTS...');
   const framesDir = join(projectDir, 'frames');
   const padFrame = (n) => `slide-${String(n).padStart(2, '0')}.png`;
 
-  const capaIntro = join(outDir, padFrame(0));
+  const capaIntro = join(imagensDir, padFrame(0));
   if (!existsSync(capaIntro)) throw new Error(`Imagem da introdução não encontrada: ${capaIntro}`);
   const capaIntroDest = join(framesDir, padFrame(0));
   await copyFile(capaIntro, capaIntroDest);
@@ -301,7 +303,7 @@ console.error('  Gerando narração do short via TTS...');
   const slidesParaUsar = roteiroOriginal?.slides?.slice(0, numSegmentosVisuais) || [];
   for (let i = 0; i < numSegmentosVisuais; i++) {
     const imgIdx = i + 1;
-    const imgPath = join(outDir, padFrame(imgIdx));
+    const imgPath = join(imagensDir, padFrame(imgIdx));
     if (!existsSync(imgPath)) {
       console.error(`  Aviso: imagem ${imgPath} não encontrada, usando capa de intro`);
       await copyFile(capaIntro, join(framesDir, padFrame(imgIdx)));
@@ -317,7 +319,7 @@ console.error('  Gerando narração do short via TTS...');
   }
 
   const capaConclIdx = roteiroOriginal?.slides?.length ? roteiroOriginal.slides.length + 1 : numSegmentosVisuais + 1;
-  const capaConcl = join(outDir, padFrame(capaConclIdx));
+  const capaConcl = join(imagensDir, padFrame(capaConclIdx));
   if (!existsSync(capaConcl)) {
     console.error(`  Aviso: imagem de conclusão não encontrada (${capaConcl}), usando slide-00`);
     await copyFile(capaIntro, join(framesDir, padFrame(numSegmentosVisuais + 1)));
@@ -346,7 +348,7 @@ console.error('  Gerando narração do short via TTS...');
   await projects.save(proj);
 
   console.error('  renderizando frames (Chromium + ffmpeg) ...');
-  const outputPath = join(outDir, `${slug}-short-${WIDTH}x${HEIGHT}.mp4`);
+  const outputPath = join(videosDir, `${slug}-short-${WIDTH}x${HEIGHT}.mp4`);
   await orchestrator.exportMp4({
     projectId: project.id,
     outputPath,

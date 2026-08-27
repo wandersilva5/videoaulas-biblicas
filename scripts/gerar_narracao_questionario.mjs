@@ -3,7 +3,7 @@ import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { gerarNarracaoItem } from './gerar_narracao.mjs';
-import { concatenarAudiosComGaps, TEXTO_INTRO_QUESTIONARIO, PREFIX_INTRO_QUESTIONARIO } from './util.mjs';
+import { concatenarAudiosComGaps, TEXTO_INTRO_QUESTIONARIO, PREFIX_INTRO_QUESTIONARIO, dirsEstudo, garantirDirsEstudo } from './util.mjs';
 
 /** Normaliza o id do quiz: "Q1-PERGUNTA" / "q01-resposta" / "q1" -> "q1-pergunta" / "q01-resposta" / "q1". */
 function normalizarIdQuiz(id) {
@@ -154,6 +154,8 @@ async function main() {
 
   const outDir = dirname(roteiroPath);
   const slug = basename(outDir);
+  await garantirDirsEstudo(outDir);
+  const { audios: audiosDir } = dirsEstudo(outDir);
   const questionarioPath = join(outDir, 'questionario.json');
   
   if (!existsSync(questionarioPath)) {
@@ -210,24 +212,24 @@ async function main() {
       process.exit(1);
     }
   } else if (!todos) {
-    alvos = itens.filter((it) => !existsSync(join(outDir, `${it.prefix}-narracao.mp3`)));
+    alvos = itens.filter((it) => !existsSync(join(audiosDir, `${it.prefix}-narracao.mp3`)));
   }
 
   console.error(`[2/3] Gerando narração do questionário (${alvos.length} de ${itens.length} itens) ...`);
 
   const resultados = [];
   for (const item of alvos) {
-    const outPath = join(outDir, `${item.prefix}-narracao.mp3`);
+    const outPath = join(audiosDir, `${item.prefix}-narracao.mp3`);
     if (!todos && !apenas && existsSync(outPath)) {
       console.error(`  [narração] ${item.titulo} já existe, pulando.`);
     } else if (item.quiz) {
-      await gerarNarracaoPergunta(item, outDir, variar);
+      await gerarNarracaoPergunta(item, audiosDir, variar);
     } else {
       if (variar) {
         process.env.QWEN_SEED = seedAleatorio();
         process.env.QWEN_SUB_SEED = seedAleatorio();
       }
-      await gerarNarracaoItem(item, outDir);
+      await gerarNarracaoItem(item, audiosDir);
     }
     resultados.push(outPath);
   }

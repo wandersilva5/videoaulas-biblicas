@@ -2,7 +2,7 @@
  * util.mjs — Helpers compartilhados entre os scripts (fonte única de verdade).
  */
 import { createHash } from 'node:crypto';
-import { readdir, stat, rm } from 'node:fs/promises';
+import { readdir, stat, rm, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join, basename, dirname } from 'node:path';

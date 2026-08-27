@@ -2,15 +2,16 @@ import { readFile, mkdir, writeFile, copyFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { imagemPromptIntro, imagemPromptConclusao, limparTextoDePromptImagem, anexarRegrasPersonagens } from './util.mjs';
+import { imagemPromptIntro, imagemPromptConclusao, limparTextoDePromptImagem, anexarRegrasPersonagens, dirsEstudo, garantirDirsEstudo } from './util.mjs';
 
 const COMFY_URL = process.env.COMFY_URL || 'http://127.0.0.1:8188';
 const COMFY_OUTPUT_DIR = process.env.COMFY_OUTPUT_DIR || 'D:\\ComfyUI_windows_portable\\ComfyUI\\output';
 
-const ANIMA_UNET = process.env.ANIMA_UNET || 'anima\\anima-base-v1.0.safetensors';
+const ANIMA_UNET = process.env.ANIMA_UNET || 'anima\\insight_a1.0.safetensors';
 const ANIMA_CLIP = process.env.ANIMA_CLIP || 'qwen\\qwen_3_06b_base.safetensors';
 const ANIMA_VAE = process.env.ANIMA_VAE || 'qwen_image_vae.safetensors';
-const ANIMA_LORA = process.env.ANIMA_LORA || 'Anima\\minimalistflat-000006.safetensors';
+const ANIMA_LORA = process.env.ANIMA_LORA || 'Anima\\_kxwxkxt-v1-animabase1-ty_lee.safetensors';
+// const ANIMA_LORA = process.env.ANIMA_LORA || 'Anima\\F2D-000003.safetensors';
 const ANIMA_STEPS = Number(process.env.ANIMA_STEPS || 10);
 const SEED_BASE = process.env.KREA2_SEED_BASE !== undefined && process.env.KREA2_SEED_BASE !== '' ? Number(process.env.KREA2_SEED_BASE) : 1000;
 
@@ -19,7 +20,7 @@ const SEED_BASE = process.env.KREA2_SEED_BASE !== undefined && process.env.KREA2
 // + LoraLoader (Anima\minimalistflat-000006) + 8 passos er_sde cfg 5
 // + ControlOrderFreeMemory.
 // Gera imagens mais rápido que o Z-Image Turbo mantendo estilo flat clean.
-const NEGATIVE_PROMPT = 'worst quality, low quality, lowres, score_1, score_2, score_3, score_4, blurry, jpeg artifacts, cropped, long fingers, sepia, bad anatomy, missing fingers, artist name, random objects, props, furniture, text, logo, watermark, distorted body, deformed hands, extra arms, extra legs, extra fingers, low resolution, low detail, bad anatomy, bad proportions, gore,';
+const NEGATIVE_PROMPT = 'worst quality, low quality, lowres, score_1, score_2, score_3, score_4, blurry, jpeg artifacts, cropped, long fingers, sepia, bad anatomy, missing fingers, artist name, random objects, props, furniture, text, logo, watermark, distorted body, deformed hands, extra arms, extra legs, extra fingers, low resolution, low detail, bad anatomy, bad proportions, gore, exposed legs, exposed chest, exposed thighs, off-the-shoulder, photo, realism, 3d';
 
 const WORKFLOW_TEMPLATE = {
   "1": { class_type: "UNETLoader", inputs: { unet_name: "__UNET__", weight_dtype: "default" } },
@@ -116,9 +117,11 @@ export async function gerarImagensRoteiro(roteiro, outDir) {
   ];
   const total = itens.length;
   const imagens = [];
+  await garantirDirsEstudo(outDir);
+  const { imagens: imagensDir } = dirsEstudo(outDir);
   for (let i = 0; i < total; i++) {
     const item = itens[i];
-    const dest = join(outDir, item.arquivo);
+    const dest = join(imagensDir, item.arquivo);
     if (existsSync(dest)) {
       console.error(`  [imagem ${i + 1}/${total}] ${item.rotulo} (já existe, pulando)`);
       imagens.push({ id: item.id, path: dest });

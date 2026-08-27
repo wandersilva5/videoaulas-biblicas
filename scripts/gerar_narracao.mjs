@@ -3,7 +3,7 @@ import { join, dirname } from 'node:path';
 import { existsSync, unlinkSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { prefixoNarracao, hashDe, qwenEnv } from './util.mjs';
+import { prefixoNarracao, hashDe, qwenEnv, dirsEstudo, garantirDirsEstudo } from './util.mjs';
 const TTS = process.env.TTS || 'qwen';
 const VOZ = process.env.VOZ || 'pt-BR-AntonioNeural';
 // Loudness consistente no MP3 final (compressão leve + ganho) — dá "presença"
@@ -267,6 +267,8 @@ async function main() {
   const todos = process.argv.includes('--todos');
   const roteiro = JSON.parse(await readFile(roteiroPath, 'utf8'));
   const outDir = dirname(roteiroPath);
+  await garantirDirsEstudo(outDir);
+  const { audios: audiosDir } = dirsEstudo(outDir);
   const textos = [
     { id: 'intro', titulo: 'Introdução', texto: roteiro.introducao },
     ...roteiro.slides.map((s) => ({ id: s.id, titulo: s.titulo, texto: s.narracao })),
@@ -290,7 +292,7 @@ async function main() {
     })();
     const filtrados = [];
     for (const item of items) {
-      const mp3 = join(outDir, `${item.prefix}-narracao.mp3`);
+      const mp3 = join(audiosDir, `${item.prefix}-narracao.mp3`);
       const atualizado = existsSync(mp3) && manifest.audio?.[item.id] === hashDe(item.texto);
       if (atualizado) {
         console.error(`  OK: ${item.prefix}-narracao.mp3 já atualizado — pulando (${item.titulo})`);
@@ -307,7 +309,7 @@ async function main() {
   }
   console.error(`[3/4] Gerando ${items.length} arquivo(s) de narração ...`);
   const narracao = [];
-  for (const item of items) narracao.push(await gerarNarracaoItem(item, outDir));
+  for (const item of items) narracao.push(await gerarNarracaoItem(item, audiosDir));
   console.log(JSON.stringify(narracao));
 }
 

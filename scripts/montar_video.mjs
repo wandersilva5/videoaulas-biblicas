@@ -14,7 +14,7 @@ import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { prefixoNarracao, esc, musicaFundo } from './util.mjs';
+import { prefixoNarracao, esc, musicaFundo, dirsEstudo, garantirDirsEstudo } from './util.mjs';
 import {
   AssetStore,
   EngineRegistry,
@@ -226,6 +226,8 @@ async function main() {
   const roteiro = JSON.parse(await readFile(roteiroPath, 'utf8'));
   const outDir = dirname(roteiroPath);
   const slug = roteiro.slug || basename(outDir);
+  await garantirDirsEstudo(outDir);
+  const { imagens: imagensDir, audios: audiosDir, videos: videosDir } = dirsEstudo(outDir);
 
   console.error('[4/4] Montando vídeo ...');
 
@@ -238,7 +240,7 @@ async function main() {
   ];
   for (let i = 0; i < textos.length; i++) {
     const prefix = prefixoNarracao(i, textos.length);
-    const path = join(outDir, `${prefix}-narracao.mp3`);
+    const path = join(audiosDir, `${prefix}-narracao.mp3`);
     if (!existsSync(path)) throw new Error(`Narração não encontrada: ${path}`);
     const durationSec = await medirDuracaoMp3(path);
     audios.push({ id: textos[i].id, path, durationSec });
@@ -246,7 +248,7 @@ async function main() {
   }
 
   // 2. Concatenar narração em um único MP3 (com gaps para os frames)
-  const narracaoFull = join(outDir, 'narracao-full.mp3');
+  const narracaoFull = join(audiosDir, 'narracao-full.mp3');
   await concatAudios(audios, narracaoFull);
 
   // 3. Preparar projeto html-video
@@ -292,14 +294,14 @@ async function main() {
   const framesDir = join(projectDir, 'frames');
   const padFrame = (n) => `slide-${String(n).padStart(2, '0')}.png`;
 
-  const capaIntro = join(outDir, padFrame(0));
+  const capaIntro = join(imagensDir, padFrame(0));
   if (!existsSync(capaIntro)) throw new Error(`Imagem da introdução não encontrada: ${capaIntro}`);
   const capaIntroDest = join(framesDir, padFrame(0));
   await copyFile(capaIntro, capaIntroDest);
   await orchestrator.writeFrameHtml(project.id, 'intro', gerarFrameIntro(roteiro, capaIntroDest));
   for (let i = 0; i < roteiro.slides.length; i++) {
     const slide = roteiro.slides[i];
-    const imgPath = join(outDir, padFrame(i + 1));
+    const imgPath = join(imagensDir, padFrame(i + 1));
     if (!existsSync(imgPath)) throw new Error(`Imagem do slide não encontrada: ${imgPath}`);
     // Copiar imagem para o diretório do frame para referência relativa funcionar
     // (writeFrameHtml grava em <projectDir>/frames/, mesma pasta do HTML)
@@ -311,7 +313,7 @@ async function main() {
       gerarFrameHtml(slide, imgDest, i + 1, roteiro.slides.length, roteiro.titulo_aula),
     );
   }
-  const capaConcl = join(outDir, padFrame(roteiro.slides.length + 1));
+  const capaConcl = join(imagensDir, padFrame(roteiro.slides.length + 1));
   if (!existsSync(capaConcl)) throw new Error(`Imagem da conclusão não encontrada: ${capaConcl}`);
   const capaConclDest = join(framesDir, padFrame(roteiro.slides.length + 1));
   await copyFile(capaConcl, capaConclDest);
@@ -339,7 +341,7 @@ async function main() {
 
   // 7. Renderizar
   console.error('  renderizando frames (Chromium + ffmpeg) ...');
-  const outputPath = join(outDir, `${slug}-${WIDTH}x${HEIGHT}.mp4`);
+  const outputPath = join(videosDir, `${slug}-${WIDTH}x${HEIGHT}.mp4`);
   await orchestrator.exportMp4({
     projectId: project.id,
     outputPath,

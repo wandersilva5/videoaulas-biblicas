@@ -39,6 +39,7 @@ async function carregarConfig() {
   })();
   const cfg = { ...DEFAULTS, ...doArquivo };
   if (process.env.PORTA) cfg.PORTA = process.env.PORTA;
+  if (process.env.PORTA_OVERRIDE) cfg.PORTA = process.env.PORTA_OVERRIDE;
   return cfg;
 }
 
@@ -267,8 +268,10 @@ async function artefatos(slug) {
     imagem: imagemDe('conclusao', conclImg, imagemPromptConclusao(roteiro)),
   };
 
-  const todosVideos = (await readdir(videosDir))
-    .filter((f) => f.toLowerCase().endsWith('.mp4'));
+  const todosVideos = existsSync(videosDir)
+    ? (await readdir(videosDir))
+        .filter((f) => f.toLowerCase().endsWith('.mp4') && !f.toLowerCase().endsWith('.muxed.mp4'))
+    : [];
 
   const videosPrincipais = todosVideos
     .filter((f) => !f.includes('-questionario-'))
@@ -411,6 +414,15 @@ function arquivo(res, path) {
   createReadStream(path).pipe(res);
 }
 
+// Determina a subpasta baseada na extensão do arquivo para o route /media/
+function pastaMediaPara(ext) {
+  const e = ext.toLowerCase();
+  if (e === '.png' || e === '.jpg' || e === '.jpeg' || e === '.webp') return 'imagens';
+  if (e === '.mp3') return 'audios';
+  if (e === '.mp4') return 'videos';
+  return 'imagens'; // fallback: tenta imagens
+}
+
 function dentroDe(base, alvo) {
   const rel = resolve(base).length + 1;
   return resolve(alvo).startsWith(resolve(base) + sep) || resolve(alvo) === resolve(base);
@@ -467,8 +479,8 @@ async function listarAulas() {
         videoPronto: st.video.existe,
         shortPronto: st.short?.existe,
         pdfPronto: st.pdf.existe,
-        thumbnail: existsSync(join(OUTPUT_DIR, d.name, 'slide-01.png'))
-          ? `/media/${d.name}/slide-01.png?v=${mtimeDe(join(OUTPUT_DIR, d.name, 'slide-01.png'))}`
+        thumbnail: existsSync(join(OUTPUT_DIR, d.name, 'imagens', 'slide-01.png'))
+          ? `/media/${d.name}/slide-01.png?v=${mtimeDe(join(OUTPUT_DIR, d.name, 'imagens', 'slide-01.png'))}`
           : null,
       });
     } catch (e) {
@@ -661,7 +673,10 @@ const server = createServer(async (req, res) => {
     if (path.startsWith('/media/')) {
       const [, , slug, ...resto] = path.split('/');
       if (!ehSlugValido(slug) || resto.length !== 1) return json(res, 400, { erro: 'Caminho inválido' });
-      const alvo = join(OUTPUT_DIR, slug, 'imagens', basename(resto[0]));
+      const nomeArquivo = basename(resto[0]);
+      const ext = extname(nomeArquivo);
+      const pasta = pastaMediaPara(ext);
+      const alvo = join(OUTPUT_DIR, slug, pasta, nomeArquivo);
       if (!dentroDe(OUTPUT_DIR, alvo)) return json(res, 400, { erro: 'Caminho inválido' });
       return arquivo(res, alvo);
     }
@@ -876,6 +891,7 @@ const server = createServer(async (req, res) => {
       const body = await lerBody(req);
       const roteiro = await lerRoteiro(slug);
       const outDir = join(OUTPUT_DIR, slug);
+      const imagensDir = join(outDir, 'imagens');
       const padImg = (n) => `slide-${String(n).padStart(2, '0')}.png`;
       const itemDeImagem = (id) => {
         if (id === 'intro') return { prompt: imagemPromptIntro(roteiro), arquivo: padImg(0) };
@@ -886,7 +902,7 @@ const server = createServer(async (req, res) => {
       };
       const backups = [];
       const backupDe = async (arquivo) => {
-        const png = join(outDir, arquivo);
+        const png = join(imagensDir, arquivo);
         if (existsSync(png)) {
           const bak = png + '.bak';
           await rename(png, bak);
@@ -954,6 +970,7 @@ const server = createServer(async (req, res) => {
       const body = await lerBody(req);
       const roteiro = await lerRoteiro(slug);
       const outDir = join(OUTPUT_DIR, slug);
+      const audiosDir = join(outDir, 'audios');
       const itens = itensDoRoteiro(roteiro);
       const alvos = body.slideId ? itens.filter((it) => it.id === body.slideId) : itens;
       if (body.slideId && alvos.length === 0) {
@@ -961,8 +978,8 @@ const server = createServer(async (req, res) => {
       }
       let removidos = 0;
       for (const it of alvos) {
-        const mp3 = join(outDir, `${it.prefix}-narracao.mp3`);
-        const tmp = join(outDir, `${it.prefix}-narracao.tmp.wav`);
+        const mp3 = join(audiosDir, `${it.prefix}-narracao.mp3`);
+        const tmp = join(audiosDir, `${it.prefix}-narracao.tmp.wav`);
         if (existsSync(mp3)) { await unlink(mp3); removidos++; }
         if (existsSync(tmp)) await unlink(tmp);
       }
@@ -1113,6 +1130,7 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { erro: 'Questionário não existe.' });
       }
       const outDir = join(OUTPUT_DIR, slug);
+      const audiosDir = join(outDir, 'audios');
       const alvos = [];
       if (body.itemId) {
         const m = /^q(\d+)-(pergunta|resposta)$/i.exec(String(body.itemId));
@@ -1127,8 +1145,8 @@ const server = createServer(async (req, res) => {
       }
       let removidos = 0;
       for (const id of alvos) {
-        const mp3 = join(outDir, `${id}-narracao.mp3`);
-        const tmp = join(outDir, `${id}-narracao.tmp.wav`);
+        const mp3 = join(audiosDir, `${id}-narracao.mp3`);
+        const tmp = join(audiosDir, `${id}-narracao.tmp.wav`);
         if (existsSync(mp3)) { await unlink(mp3); removidos++; }
         if (existsSync(tmp)) await unlink(tmp);
       }
@@ -1160,73 +1178,8 @@ server.on('error', (e) => {
     console.error(`[porta] ⚠ Porta ${portaPrincipal} ocupada no ar.`);
     console.error(`[porta]   - Defina variável de ambiente: PORTA_OVERRIDE=5178`);
     console.error(`[porta]   - ou edite .config.json alterando o campo "PORTA"`);
-    // Tenta uma alternativa da lista como último recurso
-    const portaAlt = portasUnicas.find((p) => p !== portaPrincipal);
-    if (portaAlt) {
-      console.error(`[porta] Tentando alternativa ${portaAlt}...`);
-      server.listen(portaAlt, () => {
-        console.log(`[porta] Servidor ativo em http://localhost:${portaAlt} (modo alternativo)`);
-        console.error(`[porta] ⚠ Rotas /api/* podem não estar disponíveis nesta porta alternativa.`);
-      });
-    }
+    process.exit(1);
   } else {
     console.error('[porta] Erro inesperado:', e.message);
   }
 });
-  if (!existsSync(OUTPUT_DIR)) {
-    await mkdir(OUTPUT_DIR, { recursive: true });
-  }
-  const studies = await readdir(OUTPUT_DIR);
-  const studyDirs = [];
-  for (const f of studies) {
-    const fullPath = join(OUTPUT_DIR, f);
-    try {
-      const st = await stat(fullPath);
-      if (st.isDirectory()) {
-        studyDirs.push(f);
-      }
-    } catch { /* ignore */ }
-  for (const slug of studyDirs) {
-    const studyPath = join(outDir, slug);
-    const existingManifest = join(studyPath, 'manifesto.json');
-    // Verifica se já tem as subpastas (já migrou)
-    const imagensDir = join(studyPath, 'imagens');
-    const audiosDir = join(studyPath, 'audios');
-    const videosDir = join(studyPath, 'videos');
-    const alreadyMigrated = existsSync(imagensDir) && existsSync(audiosDir) && existsSync(videosDir);
-    if (alreadyMigrated) {
-      console.error(`[migr] Estudo "${slug}" já migrado — pulando.`);
-      continue;
-    }
-    console.error(`[migr] Iniciando migração automática do estudo: ${slug}`);
-    // Mover arquivos da raiz para as subpastas
-    const files = await readdir(studyPath);
-    for (const f of files) {
-      const fullPath = join(studyPath, f);
-      const statResult = await stat(fullPath);
-      if (!statResult.isFile()) continue;
-      const basename = basename(f);
-      // slide-*.png -> imagens/
-      if (/^slide-\d{2}\.png$/.test(basename)) {
-        await rename(fullPath, join(imagensDir, basename));
-        console.error(`[migr] Movido: ${basename} -> imagens/`);
-      } else if (/-narracao\.mp3$/.test(basename)) {
-        // 00-intro-narracao.mp3, 01-narracao.mp3, NN-conclusao-narracao.mp3 -> audios/
-        await rename(fullPath, join(audiosDir, basename));
-        console.error(`[migr] Movido: ${basename} -> audios/`);
-      } else if (/-questionario-.+\\.mp3$/.test(basename) || /-questionario-narracao-full\.mp3/.test(basename)) {
-        await rename(fullPath, join(audiosDir, basename));
-        console.error(`[migr] Movido: ${basename} -> audios/`);
-      } else if (/.+\.mp4$/.test(basename)) {
-        // <slug>-1920x1080.mp4, <slug>-short-1080x1920.mp4, <slug>-questionario-1920x1080.mp4 -> videos/
-        await rename(fullPath, join(videosDir, basename));
-        console.error(`[migr] Movido: ${basename} -> videos/`);
-      }
-      // roteiro-short.json, manifesto.json, material.txt, fonte.pdf ficam na raiz (não movem)
-    }
-// Se criou arquivos nas subpastas, tenta regenerar o manifesto se necessário
-console.error(`[migr] Migração do estudo "${slug}" concluída.`);
-server.listen(Number(CONFIG.PORTA), () => {
-  console.log(`Servidor rodando em http://localhost:${CONFIG.PORTA}`);
-});
-}}
