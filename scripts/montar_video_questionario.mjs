@@ -360,10 +360,9 @@ async function main() {
     const prefix = `q${String(i + 1).padStart(2, '0')}`;
     
     const durP = audios[offset + i * 2].durationSec; // narração da pergunta
-    const countdownExtra = 10.0; // segundos extras adicionados ao frame para a contagem regressiva
     
-    // delayContagem = 0 para o timer começar IMEDIATAMENTE no frame da pergunta
-    await orchestrator.writeFrameHtml(project.id, `${prefix}-pergunta`, gerarFrameQuestao(q, bgName, false, 0));
+    // delayContagem = durP para o timer começar APÓS a narração da pergunta terminar
+    await orchestrator.writeFrameHtml(project.id, `${prefix}-pergunta`, gerarFrameQuestao(q, bgName, false, durP));
     await orchestrator.writeFrameHtml(project.id, `${prefix}-resposta`, gerarFrameQuestao(q, bgName, true));
   }
 
