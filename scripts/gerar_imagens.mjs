@@ -1,8 +1,16 @@
 import { readFile, mkdir, writeFile, copyFile } from 'node:fs/promises';
+import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { imagemPromptIntro, imagemPromptConclusao, limparTextoDePromptImagem, anexarRegrasPersonagens, dirsEstudo, garantirDirsEstudo } from './util.mjs';
+
+const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
+const ROOT = join(SCRIPTS_DIR, '..');
+let doArquivo = {};
+try {
+  doArquivo = JSON.parse(readFileSync(join(ROOT, '.config.json'), 'utf8'));
+} catch { /* sem .config.json */ }
+for (const [k, v] of Object.entries(doArquivo)) if (!(k in process.env)) process.env[k] = v;
 
 const COMFY_URL = process.env.COMFY_URL || 'http://127.0.0.1:8188';
 const COMFY_OUTPUT_DIR = process.env.COMFY_OUTPUT_DIR || 'D:\\ComfyUI_windows_portable\\ComfyUI\\output';
@@ -11,7 +19,6 @@ const ANIMA_UNET = process.env.ANIMA_UNET || 'anima\\insight_a1.0.safetensors';
 const ANIMA_CLIP = process.env.ANIMA_CLIP || 'qwen\\qwen_3_06b_base.safetensors';
 const ANIMA_VAE = process.env.ANIMA_VAE || 'qwen_image_vae.safetensors';
 const ANIMA_LORA = process.env.ANIMA_LORA || 'Anima\\Disney Anima Alt.safetensors';
-// const ANIMA_LORA = process.env.ANIMA_LORA || 'Anima\\F2D-000003.safetensors';
 const ANIMA_STEPS = Number(process.env.ANIMA_STEPS || 10);
 const SEED_BASE = process.env.KREA2_SEED_BASE !== undefined && process.env.KREA2_SEED_BASE !== '' ? Number(process.env.KREA2_SEED_BASE) : 1000;
 

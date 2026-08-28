@@ -359,10 +359,11 @@ async function main() {
     const q = questionario.perguntas[i];
     const prefix = `q${String(i + 1).padStart(2, '0')}`;
     
-    const durP = audios[offset + i * 2].durationSec; // narração da pergunta — a contagem começa quando ela termina
+    const durP = audios[offset + i * 2].durationSec; // narração da pergunta
     const countdownExtra = 10.0; // segundos extras adicionados ao frame para a contagem regressiva
     
-    await orchestrator.writeFrameHtml(project.id, `${prefix}-pergunta`, gerarFrameQuestao(q, bgName, false, durP + countdownExtra));
+    // delayContagem = 0 para o timer começar IMEDIATAMENTE no frame da pergunta
+    await orchestrator.writeFrameHtml(project.id, `${prefix}-pergunta`, gerarFrameQuestao(q, bgName, false, 0));
     await orchestrator.writeFrameHtml(project.id, `${prefix}-resposta`, gerarFrameQuestao(q, bgName, true));
   }
 
