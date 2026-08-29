@@ -1623,6 +1623,54 @@ sse.addEventListener('progresso', (ev) => {
 });
 
 // ---------------------------------------------------------------------------
+// Botão flutuante de salvar (etapa 1 - Roteiro)
+// ---------------------------------------------------------------------------
+function atualizarBotaoFlutuarSalvar() {
+  const btnFlutuar = $('#btn-flutuar-salvar');
+  const etapaTopo = $('.etapa-topo');
+  if (!btnFlutuar || !etapaTopo) {
+    if (btnFlutuar) btnFlutuar.hidden = true;
+    return;
+  }
+  // Só mostra na etapa 1 (Roteiro)
+  if (estado.etapa !== 1) {
+    btnFlutuar.hidden = true;
+    return;
+  }
+  const rect = etapaTopo.getBoundingClientRect();
+  // Mostra o botão flutuante quando o topo da etapa saiu da tela (acima do header)
+  // Header tem ~60px, então considera quando o bottom do etapa-topo < 70px
+  const headerAltura = 70;
+  if (rect.bottom < headerAltura) {
+    btnFlutuar.hidden = false;
+  } else {
+    btnFlutuar.hidden = true;
+  }
+}
+
+// Listener de scroll para o botão flutuante
+let _scrollTimer = null;
+window.addEventListener('scroll', () => {
+  if (_scrollTimer) return;
+  _scrollTimer = requestAnimationFrame(() => {
+    atualizarBotaoFlutuarSalvar();
+    _scrollTimer = null;
+  });
+}, { passive: true });
+
+// Clique no botão flutuante
+$('#btn-flutuar-salvar').addEventListener('click', () => {
+  if (estado.etapa === 1) salvarRoteiro();
+});
+
+// Atualiza também ao mudar de etapa
+const _mudarEtapaOriginal = mudarEtapa;
+mudarEtapa = function(n) {
+  _mudarEtapaOriginal(n);
+  atualizarBotaoFlutuarSalvar();
+};
+
+// ---------------------------------------------------------------------------
 // Início
 // ---------------------------------------------------------------------------
 (async function init() {

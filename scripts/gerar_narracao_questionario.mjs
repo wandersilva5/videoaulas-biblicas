@@ -47,7 +47,7 @@ function dividirPerguntaEmSegmentos(texto) {
   const resto = temAviso ? t.replace(temAviso, '').trim() : t;
 
   // Separa "Pergunta número N: ..." das opções
-  const partes = resto.split(/Opção [ABC]: /i);
+  const partes = resto.split(/Opção [A-Z]: /i);
   if (partes.length >= 2) {
     // Primeira parte é a pergunta (sem as opções)
     const pergunta = partes[0].trim();
@@ -116,7 +116,7 @@ async function gerarNarracaoPergunta(item, outDir, variar = false) {
  */
 function montarNarracaoPergunta(p) {
   const opcoes = (p.opcoes || [])
-    .map((o, i) => `Opção ${'ABC'[i]}: ${String(o).replace(/^[A-C]\)\s*/i, '')}`)
+    .map((o, i) => `Opção ${String.fromCharCode(65 + i)}: ${String(o).replace(/^[A-Z]\)\s*/i, '').replace(/\.+$/, '')}`)
     .join('. ');
   const texto = `Pergunta número ${p.numero}: ${p.pergunta} ${opcoes}. Você tem 10 segundos para responder.`;
   return normalizarNarracaoPergunta(texto);
@@ -128,11 +128,12 @@ function montarNarracaoPergunta(p) {
  * acordo com `resposta_correta` (se você mudou a resposta, o áudio acompanha).
  */
 function montarNarracaoResposta(p) {
-  const letra = 'ABC'[p.resposta_correta] || 'A';
-  const opcaoCorreta = String((p.opcoes || [])[p.resposta_correta] || '')
-    .replace(/^[A-C]\)\s*/i, '');
+  const idx = Number(p.resposta_correta ?? 0);
+  const letra = String.fromCharCode(65 + idx);
+  const opcaoCorreta = String((p.opcoes || [])[idx] || '')
+    .replace(/^[A-Z]\)\s*/i, '');
   const explicacao = String(p.narracao_resposta || '')
-    .replace(/^A resposta correta é a letra [A-C]\.?\s*/i, '')
+    .replace(/^A resposta correta é a letra [A-Z]\.?\s*/i, '')
     .trim();
   if (explicacao) return `A resposta correta é a letra ${letra}. ${explicacao}`;
   return `A resposta correta é a letra ${letra}. ${opcaoCorreta}`;

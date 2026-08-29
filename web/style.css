@@ -534,6 +534,45 @@ a.btn { display: inline-block; text-decoration: none; }
 }
 .toast.erro { border-color: rgba(231, 76, 60, 0.6); }
 
+/* ---------- Botão flutuante de salvar ---------- */
+.btn-flutuar-salvar {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 60;
+  background: linear-gradient(160deg, #f0d9a0, var(--ouro) 60%, #c99a3c);
+  color: #1a1405;
+  font-weight: 700;
+  border: none;
+  border-radius: 12px;
+  padding: 14px 22px;
+  font-size: 15px;
+  box-shadow: 0 8px 28px rgba(224, 180, 90, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+  animation: slideUpFade 0.3s ease;
+  white-space: nowrap;
+}
+.btn-flutuar-salvar:hover {
+  filter: brightness(1.08);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 36px rgba(224, 180, 90, 0.5), 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+.btn-flutuar-salvar:active {
+  transform: translateY(0);
+}
+.btn-flutuar-salvar[hidden] {
+  display: none;
+}
+@keyframes slideUpFade {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 /* ---------- Scrollbars ---------- */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #1f3150; border-radius: 999px; }
