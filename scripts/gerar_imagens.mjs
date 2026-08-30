@@ -15,30 +15,28 @@ for (const [k, v] of Object.entries(doArquivo)) if (!(k in process.env)) process
 const COMFY_URL = process.env.COMFY_URL || 'http://127.0.0.1:8188';
 const COMFY_OUTPUT_DIR = process.env.COMFY_OUTPUT_DIR || 'D:\\ComfyUI_windows_portable\\ComfyUI\\output';
 
-const ANIMA_UNET = process.env.ANIMA_UNET || 'anima\\insight_a1.0.safetensors';
-const ANIMA_CLIP = process.env.ANIMA_CLIP || 'qwen\\qwen_3_06b_base.safetensors';
+const ANIMA_UNET = process.env.ANIMA_UNET || 'Krea2\\krea2_turbo_fp8_scaled.safetensors';
+const ANIMA_CLIP = process.env.ANIMA_CLIP || 'qwen\\qwen3vl_4b_fp8_scaled.safetensors';
 const ANIMA_VAE = process.env.ANIMA_VAE || 'qwen_image_vae.safetensors';
-const ANIMA_LORA = process.env.ANIMA_LORA || 'Anima\\Disney Anima Alt.safetensors';
-const ANIMA_STEPS = Number(process.env.ANIMA_STEPS || 10);
+const ANIMA_LORA = process.env.ANIMA_LORA || 'Krea2\\MinimalisticVectorArtKrea2.safetensors';
+// const ANIMA_LORA = process.env.ANIMA_LORA || 'Krea2\\Minimalism_krea2_m1n1m4l1sm_st5000.safetensors';
+const ANIMA_STEPS = Number(process.env.ANIMA_STEPS || 8);
 const SEED_BASE = process.env.KREA2_SEED_BASE !== undefined && process.env.KREA2_SEED_BASE !== '' ? Number(process.env.KREA2_SEED_BASE) : 1000;
 
-// Replica o workflow "Anima-simples.json" do usuário:
-// UNETLoader (anima-base-v1.0) + CLIPLoader type "qwen_image" (Qwen3-0.6B)
-// + LoraLoader (Anima\minimalistflat-000006) + 8 passos er_sde cfg 5
-// + ControlOrderFreeMemory.
-// Gera imagens mais rápido que o Z-Image Turbo mantendo estilo flat clean.
-const NEGATIVE_PROMPT = 'worst quality, low quality, lowres, score_1, score_2, score_3, score_4, blurry, jpeg artifacts, cropped, long fingers, sepia, bad anatomy, missing fingers, artist name, random objects, props, furniture, text, logo, watermark, distorted body, deformed hands, extra arms, extra legs, extra fingers, low resolution, low detail, bad anatomy, bad proportions, gore, exposed legs, exposed chest, exposed thighs, off-the-shoulder, photo, realism, 3d';
-
+// Replica o workflow "Krea2 - Simples.json":
+// UNETLoader (krea2_turbo_fp8_scaled) + CLIPLoader type "krea2" (Qwen3-VL-4B)
+// + LoraLoader (MinimalisticVectorArtKrea2) + 8 passos euler cfg 1
+// + ApplyKrea2NegPiP + ConditioningZeroOut.
 const WORKFLOW_TEMPLATE = {
   "1": { class_type: "UNETLoader", inputs: { unet_name: "__UNET__", weight_dtype: "default" } },
-  "2": { class_type: "CLIPLoader", inputs: { clip_name: "__CLIP__", type: "qwen_image" } },
+  "2": { class_type: "CLIPLoader", inputs: { clip_name: "__CLIP__", type: "krea2" } },
   "3": { class_type: "VAELoader", inputs: { vae_name: "__VAE__" } },
   "4": { class_type: "LoraLoader", inputs: { model: ["1", 0], clip: ["2", 0], lora_name: "__LORA__", strength_model: 1.0, strength_clip: 1.0 } },
   "5": { class_type: "CLIPTextEncode", inputs: { clip: ["4", 1], text: "__POSITIVE__" } },
-  "6": { class_type: "CLIPTextEncode", inputs: { clip: ["4", 1], text: NEGATIVE_PROMPT } },
+  "6": { class_type: "ConditioningZeroOut", inputs: { conditioning: ["5", 0] } },
   "7": { class_type: "EmptyLatentImage", inputs: { width: 1152, height: 640, batch_size: 1 } },
-  "8": { class_type: "KSampler", inputs: { model: ["4", 0], positive: ["5", 0], negative: ["6", 0], latent_image: ["7", 0], seed: "__SEED__", steps: "__STEPS__", cfg: 5, sampler_name: "er_sde", scheduler: "simple", denoise: 1.0 } },
-  "9": { class_type: "ControlOrderFreeMemory", inputs: { persist_any_1: ["8", 0], free_memory: true } },
+  "8": { class_type: "ApplyKrea2NegPiP", inputs: { model: ["4", 0], clip: ["4", 1], value_strength: 1, patch_txtfusion_refiners: false, block_start: 0, block_end: 27, block_stride: 1 } },
+  "9": { class_type: "KSampler", inputs: { model: ["8", 0], positive: ["5", 0], negative: ["6", 0], latent_image: ["7", 0], seed: "__SEED__", steps: "__STEPS__", cfg: 1, sampler_name: "euler", scheduler: "simple", denoise: 1.0 } },
   "10": { class_type: "VAEDecode", inputs: { samples: ["9", 0], vae: ["3", 0] } },
   "11": { class_type: "SaveImage", inputs: { images: ["10", 0], filename_prefix: "teologia_slide" } },
 };
@@ -92,8 +90,8 @@ export async function gerarImagemSlide(prompt, seed = 42) {
   workflow['3'].inputs.vae_name = ANIMA_VAE;
   workflow['4'].inputs.lora_name = ANIMA_LORA;
   workflow['5'].inputs.text = anexarRegrasPersonagens(limparTextoDePromptImagem(prompt));
-  workflow['8'].inputs.seed = seed;
-  workflow['8'].inputs.steps = ANIMA_STEPS;
+  workflow['9'].inputs.seed = seed;
+  workflow['9'].inputs.steps = ANIMA_STEPS;
   const promptId = await submeterPrompt(workflow);
   const files = await aguardarExecucao(promptId);
   const file = files[0];
