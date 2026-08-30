@@ -315,16 +315,13 @@ export const hashDe = (t) => createHash('sha1').update(t ?? '').digest('hex');
  * trechos com regex, o que deixava fragmentos quebrados no prompt.
  */
 const MARCAS_TEXTO_IMAGEM = [
-  'written', 'inscribed', 'printed', 'typed', 'lettering', 'lettered',
-  'phrase', 'quote', 'quotation', 'caption', 'label', 'heading', 'headline',
   'chalkboard', 'blackboard', 'whiteboard', 'signboard', 'billboard',
-  'speech bubble', 'speech-bubble', 'thought bubble', 'says', 'saying',
+  'speech bubble', 'speech-bubble', 'thought bubble',
   'the text', 'with text', 'text on', 'text reads', 'text in',
+  'text overlay', 'text saying', 'text displaying',
   'the word', 'the words', 'with the word', 'with the words', 'word in',
-  'scroll reading', 'scroll titled', 'scroll with', 'a scroll that',
-  'book titled', 'book with', 'titled',
-  'scripture', 'biblical verse', 'verse ', 'bible quote', 'biblical quote',
-  'reads', 'displaying', 'proclaiming', 'engraved', 'embossed', 'etched',
+  'label', 'caption', 'heading', 'headline', 'lettering', 'lettered',
+  'reads', 'displaying', 'proclaiming',
 ];
 
 const RE_ASPAS = /["“”'‘’][^"“”'‘’]*["“”'‘’]/g;

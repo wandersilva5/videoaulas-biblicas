@@ -20,7 +20,7 @@ const ANIMA_CLIP = process.env.ANIMA_CLIP || 'qwen\\qwen3vl_4b_fp8_scaled.safete
 const ANIMA_VAE = process.env.ANIMA_VAE || 'qwen_image_vae.safetensors';
 const ANIMA_LORA = process.env.ANIMA_LORA || 'Krea2\\MinimalisticVectorArtKrea2.safetensors';
 // const ANIMA_LORA = process.env.ANIMA_LORA || 'Krea2\\Minimalism_krea2_m1n1m4l1sm_st5000.safetensors';
-const ANIMA_STEPS = Number(process.env.ANIMA_STEPS || 8);
+const ANIMA_STEPS = Number(process.env.ANIMA_STEPS || 6);
 const SEED_BASE = process.env.KREA2_SEED_BASE !== undefined && process.env.KREA2_SEED_BASE !== '' ? Number(process.env.KREA2_SEED_BASE) : 1000;
 
 // Replica o workflow "Krea2 - Simples.json":
@@ -32,7 +32,7 @@ const WORKFLOW_TEMPLATE = {
   "2": { class_type: "CLIPLoader", inputs: { clip_name: "__CLIP__", type: "krea2" } },
   "3": { class_type: "VAELoader", inputs: { vae_name: "__VAE__" } },
   "4": { class_type: "LoraLoader", inputs: { model: ["1", 0], clip: ["2", 0], lora_name: "__LORA__", strength_model: 1.0, strength_clip: 1.0 } },
-  "5": { class_type: "CLIPTextEncode", inputs: { clip: ["4", 1], text: "__POSITIVE__" } },
+  "5": { class_type: "CLIPTextEncode", inputs: { clip: ["8", 1], text: "__POSITIVE__" } },
   "6": { class_type: "ConditioningZeroOut", inputs: { conditioning: ["5", 0] } },
   "7": { class_type: "EmptyLatentImage", inputs: { width: 1152, height: 640, batch_size: 1 } },
   "8": { class_type: "ApplyKrea2NegPiP", inputs: { model: ["4", 0], clip: ["4", 1], value_strength: 1, patch_txtfusion_refiners: false, block_start: 0, block_end: 27, block_stride: 1 } },
@@ -92,6 +92,7 @@ export async function gerarImagemSlide(prompt, seed = 42) {
   workflow['5'].inputs.text = anexarRegrasPersonagens(limparTextoDePromptImagem(prompt));
   workflow['9'].inputs.seed = seed;
   workflow['9'].inputs.steps = ANIMA_STEPS;
+  console.error(`  [prompt] ${workflow['5'].inputs.text.slice(0, 120)}...`);
   const promptId = await submeterPrompt(workflow);
   const files = await aguardarExecucao(promptId);
   const file = files[0];
