@@ -83,9 +83,23 @@ function formatarLinhaLog(msg) {
   return div;
 }
 
+// Retém apenas as LOGS_EXECUCOES_RETIDAS últimas execuções (job) para o
+// histórico não crescer sem limite — mesma regra do servidor (servidor.mjs).
+const LOGS_EXECUCOES_RETIDAS = 3;
+
+function podarLogsPorExecucao() {
+  const vistos = [];
+  for (const m of estado.logs) {
+    if (m.jobId != null && !vistos.includes(m.jobId)) vistos.push(m.jobId);
+  }
+  if (vistos.length <= LOGS_EXECUCOES_RETIDAS) return;
+  const descartar = vistos.slice(0, vistos.length - LOGS_EXECUCOES_RETIDAS);
+  estado.logs = estado.logs.filter((m) => m.jobId == null || !descartar.includes(m.jobId));
+}
+
 function adicionarLog(msg) {
   estado.logs.push(msg);
-  if (estado.logs.length > 500) estado.logs.splice(0, estado.logs.length - 500);
+  podarLogsPorExecucao();
 
   if (msg.tipo === 'erro') {
     const btnLogs = $('#btn-logs');

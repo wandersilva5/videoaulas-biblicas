@@ -53,11 +53,32 @@ async function salvarConfig() {
 // Fila de eventos (SSE) e Histórico de Logs
 // ---------------------------------------------------------------------------
 const clientes = new Set();
+// Histórico por execução (job): mantém apenas as LOGS_EXECUCOES_RETIDAS últimas
+// execuções, para o histórico não crescer sem limite. Toda msg de job carrega
+// jobId; uma msg eventualmente sem jobId herda o job vigente (logsUltimoJobId).
+const LOGS_EXECUCOES_RETIDAS = 3;
 const logsHistorico = [];
+let logsUltimoJobId = null;
+
+function registrarLogExecucao(msg) {
+  const jobId = msg.jobId ?? logsUltimoJobId;
+  if (jobId != null) {
+    logsUltimoJobId = jobId;
+    if (msg.jobId == null) msg.jobId = jobId;
+  }
+  logsHistorico.push(msg);
+  // Mantém apenas as LOGS_EXECUCOES_RETIDAS últimas execuções (ordem de 1ª aparição).
+  const vistos = [...new Set(logsHistorico.map((m) => m.jobId))];
+  if (vistos.length > LOGS_EXECUCOES_RETIDAS) {
+    const descartar = new Set(vistos.slice(0, vistos.length - LOGS_EXECUCOES_RETIDAS));
+    const mantidos = logsHistorico.filter((m) => !descartar.has(m.jobId));
+    logsHistorico.length = 0;
+    logsHistorico.push(...mantidos);
+  }
+}
 
 function broadcast(msg) {
-  logsHistorico.push(msg);
-  if (logsHistorico.length > 500) logsHistorico.splice(0, logsHistorico.length - 500);
+  registrarLogExecucao(msg);
   const payload = `event: progresso\ndata: ${JSON.stringify(msg)}\n\n`;
   for (const res of clientes) {
     try {
