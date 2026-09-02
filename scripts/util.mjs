@@ -2,7 +2,7 @@
  * util.mjs — Helpers compartilhados entre os scripts (fonte única de verdade).
  */
 import { createHash } from 'node:crypto';
-import { readdir, stat, rm, mkdir } from 'node:fs/promises';
+import { readdir, stat, rm, mkdir, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join, basename, dirname } from 'node:path';
@@ -449,6 +449,61 @@ export function dirsEstudo(outDir) {
     audios:  join(outDir, 'audios'),
     videos:  join(outDir, 'videos'),
   };
+}
+
+/**
+ * Exporta o MP4 via html-video e promove o resultado com retry para o
+ * Windows: o core grava o vídeo mudo direto no destino, muxa o áudio num
+ * temporário `<video>.muxed.mp4` e renomeia por cima do destino — `rename`
+ * falha com EPERM se o MP4 antigo estiver aberto num player/navegador
+ * (ex.: preview de vídeo aberto na UI). O render e o mux já estão COMPLETOS
+ * nesse ponto; só a substituição falhou. Então:
+ *   1. se sobrou um `.muxed.mp4` órfão de execução anterior, promove antes
+ *      de renderizar (não fatal — o render novo pode substituí-lo);
+ *   2. se o `exportMp4` falhar mas o `.muxed.mp4` existir (render+mux ok,
+ *      rename travado), tenta promover com janela longa e instruções.
+ */
+export async function exportarMp4ComRetry(orchestrator, { projectId, outputPath, onProgress, tentativas = 30, esperaMs = 2000 }) {
+  const muxedPath = `${outputPath}.muxed.mp4`;
+  if (existsSync(muxedPath)) {
+    console.error(`  [recuperação] ${basename(muxedPath)} órfão de execução anterior — promovendo antes de renderizar`);
+    try {
+      await promoverComRetry(muxedPath, outputPath, tentativas, esperaMs);
+    } catch (e) {
+      console.error(`  [aviso] não foi possível promover o vídeo anterior (${e.message}); seguindo com o render`);
+    }
+  }
+  try {
+    await orchestrator.exportMp4({ projectId, outputPath, onProgress });
+    return;
+  } catch (e) {
+    // Render + mux podem ter concluído e só o rename final ter falhado —
+    // nesse caso o `.muxed.mp4` ficou no disco e o vídeo está pronto.
+    if (!existsSync(muxedPath)) throw e;
+    console.error(`  [aviso] render concluído, mas a substituição de ${basename(outputPath)} falhou (${e.code ?? e.message})`);
+    console.error('  [aviso] feche o vídeo em qualquer player/navegador para concluir a substituição');
+  }
+  await promoverComRetry(muxedPath, outputPath, tentativas, esperaMs);
+  console.error(`  vídeo recuperado e concluído: ${outputPath}`);
+}
+
+/** `rename` com retry — EPERM/EBUSY no Windows enquanto o destino está aberto em outro processo. */
+export async function promoverComRetry(de, para, tentativas = 30, esperaMs = 2000) {
+  for (let i = 1; i <= tentativas; i++) {
+    try {
+      await rename(de, para);
+      return;
+    } catch (e) {
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(e.code) || i === tentativas) {
+        throw new Error(
+          `${basename(para)} está aberto em outro programa (player/navegador) e não pôde ser substituído. ` +
+            `O vídeo pronto está em ${basename(de)} — feche o player e rode a etapa novamente para promovê-lo. (${e.code ?? e.message})`,
+        );
+      }
+      console.error(`  [aguardando] ${basename(para)} travado (feche o player/navegador); nova tentativa em ${esperaMs}ms (${i}/${tentativas - 1})`);
+      await new Promise((r) => setTimeout(r, esperaMs));
+    }
+  }
 }
 
 /** Cria as 3 subpastas (imagens/, audios/, videos/) se não existirem. */

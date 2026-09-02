@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { esc, concatenarAudiosComGaps, PREFIX_INTRO_QUESTIONARIO, TEXTO_INTRO_QUESTIONARIO, musicaFundo, dirsEstudo, garantirDirsEstudo } from './util.mjs';
+import { esc, concatenarAudiosComGaps, PREFIX_INTRO_QUESTIONARIO, TEXTO_INTRO_QUESTIONARIO, musicaFundo, dirsEstudo, garantirDirsEstudo, exportarMp4ComRetry } from './util.mjs';
 import { gerarNarracaoItem } from './gerar_narracao.mjs';
 import {
   AssetStore,
@@ -387,7 +387,7 @@ async function main() {
 
   console.error('  renderizando quiz (Chromium + ffmpeg) ...');
   const outputPath = join(videosDir, `${slug}-questionario-${WIDTH}x${HEIGHT}.mp4`);
-  await orchestrator.exportMp4({
+  await exportarMp4ComRetry(orchestrator, {
     projectId: project.id,
     outputPath,
     onProgress: (pct, stage) => console.error(`  ${pct.toFixed(0)}% ${stage}`),

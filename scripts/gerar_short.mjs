@@ -15,7 +15,7 @@ import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { prefixoNarracao, esc, musicaFundo, dirsEstudo, garantirDirsEstudo } from './util.mjs';
+import { prefixoNarracao, esc, musicaFundo, dirsEstudo, garantirDirsEstudo, exportarMp4ComRetry } from './util.mjs';
 import {
   AssetStore,
   EngineRegistry,
@@ -349,7 +349,7 @@ console.error('  Gerando narração do short via TTS...');
 
   console.error('  renderizando frames (Chromium + ffmpeg) ...');
   const outputPath = join(videosDir, `${slug}-short-${WIDTH}x${HEIGHT}.mp4`);
-  await orchestrator.exportMp4({
+  await exportarMp4ComRetry(orchestrator, {
     projectId: project.id,
     outputPath,
     onProgress: (pct, stage) => console.error(`  ${pct.toFixed(0)}% ${stage}`),
