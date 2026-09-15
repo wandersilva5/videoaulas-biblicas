@@ -2,7 +2,7 @@
  * util.mjs — Helpers compartilhados entre os scripts (fonte única de verdade).
  */
 import { createHash } from 'node:crypto';
-import { readdir, stat, rm, mkdir, rename } from 'node:fs/promises';
+import { readdir, stat, rm, mkdir, rename, open, copyFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join, basename, dirname } from 'node:path';
@@ -459,19 +459,26 @@ export function dirsEstudo(outDir) {
  * (ex.: preview de vídeo aberto na UI). O render e o mux já estão COMPLETOS
  * nesse ponto; só a substituição falhou. Então:
  *   1. se sobrou um `.muxed.mp4` órfão de execução anterior, promove antes
- *      de renderizar (não fatal — o render novo pode substituí-lo);
+ *      de renderizar — se não der (arquivo travado), ABORTA sem renderizar,
+ *      porque o render novo gravaria por cima do destino travado e o órfão
+ *      (que já é um vídeo pronto) seria desperdiçado;
  *   2. se o `exportMp4` falhar mas o `.muxed.mp4` existir (render+mux ok,
- *      rename travado), tenta promover com janela longa e instruções.
+ *      rename travado), tenta promover com janela longa e instruções;
+ *   3. o destino é pré-testado com `podeSubstituir()` antes de renderizar —
+ *      falha rápido (em segundos) em vez de descobrir o lock só no fim do
+ *      render (~9 min perdidos).
  */
 export async function exportarMp4ComRetry(orchestrator, { projectId, outputPath, onProgress, tentativas = 30, esperaMs = 2000 }) {
   const muxedPath = `${outputPath}.muxed.mp4`;
   if (existsSync(muxedPath)) {
     console.error(`  [recuperação] ${basename(muxedPath)} órfão de execução anterior — promovendo antes de renderizar`);
-    try {
-      await promoverComRetry(muxedPath, outputPath, tentativas, esperaMs);
-    } catch (e) {
-      console.error(`  [aviso] não foi possível promover o vídeo anterior (${e.message}); seguindo com o render`);
-    }
+    await promoverComRetry(muxedPath, outputPath, tentativas, esperaMs);
+  }
+  if (existsSync(outputPath) && !(await podeSubstituir(outputPath))) {
+    throw new Error(
+      `${basename(outputPath)} está aberto em outro programa (player/navegador) — feche-o antes de montar o vídeo. ` +
+        `(detectado antes de renderizar, sem desperdiçar o render)`,
+    );
   }
   try {
     await orchestrator.exportMp4({ projectId, outputPath, onProgress });
@@ -487,22 +494,70 @@ export async function exportarMp4ComRetry(orchestrator, { projectId, outputPath,
   console.error(`  vídeo recuperado e concluído: ${outputPath}`);
 }
 
-/** `rename` com retry — EPERM/EBUSY no Windows enquanto o destino está aberto em outro processo. */
+/**
+ * Testa se um arquivo existente pode ser substituído/renomeado por cima no
+ * Windows: abre com FILE_APPEND_DATA (`'a'`) — se outro processo (player,
+ * preview `<video>` da UI) mantém um handle com compartilhamento
+ * restritivo, o open falha com EPERM/EBUSY imediatamente, sem retry.
+ * Fecha o handle em seguida (o arquivo não é alterado: `'a'` só posiciona
+ * no fim, nada é escrito).
+ */
+export async function podeSubstituir(path) {
+  let fh;
+  try {
+    fh = await open(path, 'a');
+  } catch (e) {
+    if (['EPERM', 'EACCES', 'EBUSY'].includes(e.code)) return false;
+    throw e;
+  }
+  await fh.close();
+  return true;
+}
+
+/**
+ * `rename` com retry — EPERM/EBUSY no Windows enquanto o destino está aberto
+ * em outro processo. Se o `rename` travar, tenta `copyFile` por cima:
+ * players/navegadores normalmente abrem o MP4 compartilhando leitura+escrita
+ * (permitem escrever por cima) mas sem FILE_SHARE_DELETE — que é exatamente
+ * o que o `rename` precisa. Se nem a cópia der, aí sim é preciso fechar o
+ * player (as tentativas continuam até o usuário fechar).
+ */
 export async function promoverComRetry(de, para, tentativas = 30, esperaMs = 2000) {
+  let copiaBloqueada = false;
   for (let i = 1; i <= tentativas; i++) {
+    let err;
     try {
       await rename(de, para);
       return;
     } catch (e) {
-      if (!['EPERM', 'EACCES', 'EBUSY'].includes(e.code) || i === tentativas) {
-        throw new Error(
-          `${basename(para)} está aberto em outro programa (player/navegador) e não pôde ser substituído. ` +
-            `O vídeo pronto está em ${basename(de)} — feche o player e rode a etapa novamente para promovê-lo. (${e.code ?? e.message})`,
-        );
-      }
-      console.error(`  [aguardando] ${basename(para)} travado (feche o player/navegador); nova tentativa em ${esperaMs}ms (${i}/${tentativas - 1})`);
-      await new Promise((r) => setTimeout(r, esperaMs));
+      err = e;
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(e.code)) throw e;
     }
+    // rename bloqueado (arquivo aberto): tentar escrever por cima — players
+    // costumam compartilhar escrita, só não compartilham exclusão/rename.
+    if (!copiaBloqueada) {
+      try {
+        await copyFile(de, para);
+        try {
+          await rm(de, { force: true });
+        } catch {
+          console.error(`  [aviso] cópia concluída, mas ${basename(de)} não pôde ser apagado — será promovido de novo na próxima execução`);
+        }
+        console.error(`  [promovido] ${basename(para)} atualizado via cópia direta (rename bloqueado pelo player, escrita compartilhada)`);
+        return;
+      } catch {
+        copiaBloqueada = true;
+        console.error('  [aguardando] cópia direta também bloqueada — feche o player/navegador que tem o vídeo aberto');
+      }
+    }
+    if (i === tentativas) {
+      throw new Error(
+        `${basename(para)} está aberto em outro programa (player/navegador) e não pôde ser substituído. ` +
+          `O vídeo pronto está em ${basename(de)} — feche o player e rode a etapa novamente para promovê-lo. (${err.code ?? err.message})`,
+      );
+    }
+    console.error(`  [aguardando] ${basename(para)} travado (feche o player/navegador); nova tentativa em ${esperaMs}ms (${i}/${tentativas - 1})`);
+    await new Promise((r) => setTimeout(r, esperaMs));
   }
 }
 

@@ -689,9 +689,9 @@ function renderEtapa4(el) {
     <div class="video-item">
       <div class="video-rotulo">
         <span>${esc(v.arquivo)}</span>
-        <a class="btn btn-mini" href="/media/${estado.slug}/${esc(v.arquivo)}" download title="Baixar MP4">⬇ download</a>
+        <a class="btn btn-mini" href="/media/${estado.slug}/${esc(v.arquivo)}?v=${v.mtime ?? ''}" download title="Baixar MP4">⬇ download</a>
       </div>
-      <video class="player-video" controls src="/media/${estado.slug}/${esc(v.arquivo)}"></video>
+      <video class="player-video" controls src="/media/${estado.slug}/${esc(v.arquivo)}?v=${v.mtime ?? ''}"></video>
     </div>`)
     .join('');
 
@@ -789,9 +789,9 @@ function renderEtapa6(el) {
         <div class="video-item">
           <div class="video-rotulo">
             <span>${esc(short.arquivo)}</span>
-            <a class="btn btn-mini" href="/media/${estado.slug}/${esc(short.arquivo)}" download title="Baixar YouTube Short">⬇ download</a>
+            <a class="btn btn-mini" href="/media/${estado.slug}/${esc(short.arquivo)}?v=${short.mtime ?? ''}" download title="Baixar YouTube Short">⬇ download</a>
           </div>
-          <video class="player-video" controls src="/media/${estado.slug}/${esc(short.arquivo)}"></video>
+          <video class="player-video" controls src="/media/${estado.slug}/${esc(short.arquivo)}?v=${short.mtime ?? ''}"></video>
         </div>
         <p class="msg-progresso" style="margin-top:10px">Gerado em ${new Date(short.mtime).toLocaleString('pt-BR')} · ${(short.tamanho / (1024 * 1024)).toFixed(1)} MB</p>
       </div>`
@@ -803,9 +803,9 @@ function renderEtapa6(el) {
     <div class="video-item">
       <div class="video-rotulo">
         <span>${esc(v.arquivo)}</span>
-        <a class="btn btn-mini" href="/media/${estado.slug}/${esc(v.arquivo)}" download title="Baixar MP4">⬇ download</a>
+        <a class="btn btn-mini" href="/media/${estado.slug}/${esc(v.arquivo)}?v=${v.mtime ?? ''}" download title="Baixar MP4">⬇ download</a>
       </div>
-      <video class="player-video" controls src="/media/${estado.slug}/${esc(v.arquivo)}"></video>
+      <video class="player-video" controls src="/media/${estado.slug}/${esc(v.arquivo)}?v=${v.mtime ?? ''}"></video>
     </div>`)
     .join('');
 
@@ -889,9 +889,9 @@ function renderEtapa8(el) {
         <div class="video-item">
           <div class="video-rotulo">
             <span>${esc(quiz.arquivo)}</span>
-            <a class="btn btn-mini" href="/media/${estado.slug}/${esc(quiz.arquivo)}" download title="Baixar vídeo do questionário">⬇ download</a>
+            <a class="btn btn-mini" href="/media/${estado.slug}/${esc(quiz.arquivo)}?v=${quiz.mtime ?? ''}" download title="Baixar vídeo do questionário">⬇ download</a>
           </div>
-          <video class="player-video" controls src="/media/${estado.slug}/${esc(quiz.arquivo)}"></video>
+          <video class="player-video" controls src="/media/${estado.slug}/${esc(quiz.arquivo)}?v=${quiz.mtime ?? ''}"></video>
         </div>
         <p class="msg-progresso" style="margin-top:10px">Gerado em ${new Date(quiz.mtime).toLocaleString('pt-BR')} · ${(quiz.tamanho / (1024 * 1024)).toFixed(1)} MB</p>
       </div>`
@@ -1023,6 +1023,7 @@ async function regenerarRoteiro() {
 
 async function rodarJob(promise, mensagemOk) {
   estado.jobAtivo = true;
+  soltarPlayers();
   sincronizarBotoes();
   try {
     await promise;
@@ -1035,6 +1036,19 @@ async function rodarJob(promise, mensagemOk) {
     estado.jobAtivo = false;
     sincronizarBotoes();
   }
+}
+
+// Solta todos os <video>/<audio> da página antes de um job: um player com
+// src ativo mantém o MP4/MP3 aberto no servidor (Windows trava a substituição
+// do arquivo durante a remontagem). Pausar + remover o src libera o handle.
+function soltarPlayers() {
+  document.querySelectorAll('video, audio').forEach((p) => {
+    try {
+      p.pause();
+      p.removeAttribute('src');
+      p.load();
+    } catch { /* player já morto */ }
+  });
 }
 
 // ---------------------------------------------------------------------------
