@@ -34,9 +34,9 @@ export function qwenEnv(env = process.env) {
     QWEN_ROOT: env.QWEN_ROOT || 'E:/llama.cpp/qwen3-tts-gguf',
     QWEN_PYTHON: env.QWEN_PYTHON || 'python',
     QWEN_MODEL: env.QWEN_MODEL || 'model-base',
-    QWEN_REF: env.QWEN_REF || join(ROOT, 'voz-base', 'vander-24k.wav'),
+    QWEN_REF: env.QWEN_REF || join(ROOT, 'voz-base', 'voz-pedro.mp3'),
     QWEN_REF_START: env.QWEN_REF_START || '0',
-    QWEN_REF_END: env.QWEN_REF_END || '46.5',
+    QWEN_REF_END: env.QWEN_REF_END || '40.972',
     QWEN_REF_TEXTO:
       env.QWEN_REF_TEXTO ||
       'Olá, meus queridos amigos! Sejam bem-vindos a mais uma videoaula de teologia. Hoje vamos refletir sobre a verdade de Deus, que permanece firme em todas as gerações. Você já parou para pensar no tamanho do seu amor? Prestem atenção, porque cada versículo traz ensinamentos preciosos: sobre o perdão, sobre a fé e sobre a esperança que renova o nosso coração. Quando a vida fica difícil, lembre-se de que Deus nunca nos abandona, e que a fé nos dá forças para recomeçar. Que a paz do Senhor encha os seus dias, agora e para sempre. Amém!',
@@ -356,30 +356,118 @@ export function limparTextoDePromptImagem(prompt) {
 }
 
 /**
- * Regras fixas de descrição de personagem anexadas a TODO prompt de imagem
- * (em inglês, pois o modelo de imagem recebe prompts em inglês):
- *  - declara sempre o gênero de cada figura humana (homem ou mulher);
- *  - homem comum sem nome e da época atual: cabelo curto, camisa, calça e sapatos;
- *  - personagem bíblico/histórico masculino: roupas da época (túnica/manto, sandálias);
- *  - mulher comum sem nome e da época atual: modesta e recatada, sem pernas de fora,
- *    sem decote nem alças finas;
- *  - nenhum homem de cabelos longos, a menos que seja um personagem masculino
- *    especificamente conhecido por isso (ex.: Sansão).
+ * Regras de personagem para prompts de imagem (em inglês, pois o modelo de
+ * imagem recebe prompts em inglês). Só entram quando o prompt do roteiro pede
+ * alguma figura humana/divina — ver `temFiguraHumana`.
+ *
+ * Por que este formato: o texto antigo listava arquétipos ("ordinary man ...",
+ * "biblical male character ...", "ordinary woman ...") e o modelo lia a lista
+ * como ELENCO — desenhava um de cada, mesmo pedindo uma pessoa só. As regras
+ * abaixo usam fraseado condicional ("any man shown ...") + quantidade exata,
+ * que o modelo lê como restrição, não como elenco.
  */
-export const REGRAS_PERSONAGENS_IMAGEM =
-  'character guidelines: every human figure must be clearly a man or a woman; ' +
-  'ordinary man (no proper name, present day) with short hair, shirt, pants and shoes; ' +
-  'biblical or historical male character wearing era-appropriate clothing (robe, tunic, sandals); ' +
-  'ordinary woman (no proper name, present day) in a modest fully covered outfit, no bare legs, ' +
-  'no cleavage, no sleeveless top; no man with long hair unless he is a specific male character ' +
-  'famous for long hair';
+export const REGRAS_PESSOA_SINGULAR =
+  'exactly one person in the image, no other people, no background figures or onlookers; ' +
+  'fully visible and well-lit, detailed face and clothing in natural colors, ' +
+  'no silhouettes, no solid black figures, no shadow people; ' +
+  'any man shown has short hair, shirt, pants and shoes, or era-appropriate robe, tunic and sandals ' +
+  'if he is a biblical or historical character; any woman shown wears a modest fully covered outfit, ' +
+  'no bare legs, no cleavage, no sleeveless top; no man with long hair unless he is a specific ' +
+  'male character famous for long hair';
 
-/** Anexa as regras de personagem a um prompt de imagem (idempotente — não duplica se já presentes). */
+export const REGRAS_PESSOA_PLURAL =
+  'exactly the people described in the scene and no others, no extra onlookers or background figures; ' +
+  'everyone fully visible and well-lit, detailed faces and clothing in natural colors, ' +
+  'no silhouettes, no solid black figures, no shadow people; ' +
+  'any man shown has short hair, shirt, pants and shoes, or era-appropriate robe, tunic and sandals ' +
+  'if he is a biblical or historical character; any woman shown wears a modest fully covered outfit, ' +
+  'no bare legs, no cleavage, no sleeveless top; no man with long hair unless he is a specific ' +
+  'male character famous for long hair';
+
+/** Close-up de mão(s): mantém o enquadramento, sem corpos inteiros nem figurantes. */
+export const REGRAS_CLOSE_UP_MAOS =
+  'keep the close-up framing, show only the described hand or hands, no full bodies, ' +
+  'no faces, no extra people, well-lit with natural skin tones, no silhouettes';
+
+/** Compat: restrições de personagem (era o bloco único anexado a tudo). */
+export const REGRAS_PERSONAGENS_IMAGEM = REGRAS_PESSOA_SINGULAR;
+
+/**
+ * Guarda anti-figuras para prompts SEM gente: impede o modelo de inventar
+ * pessoas onde o roteiro pediu só objetos/cenários. Vai no prompt positivo
+ * porque o workflow Krea2 usa ConditioningZeroOut (não há negative prompt).
+ */
+export const SEM_PESSOAS_IMAGEM = 'no people, no human figures, no silhouettes of people, empty scene';
+
+/** Palavras que indicam figura humana/divina no prompt (EN + PT, pois o LLM às vezes mistura). */
+const FIGURAS_HUMANAS = [
+  'man', 'men', 'woman', 'women', 'person', 'people', 'human', 'humans',
+  'figure', 'figures', 'child', 'children', 'boy', 'boys', 'girl', 'girls', 'baby', 'babies',
+  'god', 'jesus', 'christ', 'deity', 'deities', 'messiah', 'savior', 'saviour',
+  'angel', 'angels', 'saint', 'saints',
+  'disciple', 'disciples', 'apostle', 'apostles', 'prophet', 'prophets',
+  'king', 'kings', 'queen', 'queens', 'priest', 'priests',
+  'crowd', 'crowds', 'multitude', 'shepherd', 'shepherds',
+  'fisherman', 'fishermen', 'soldier', 'soldiers', 'servant', 'servants',
+  'father', 'mother', 'son', 'sons', 'daughter', 'daughters',
+  'brother', 'brothers', 'sister', 'sisters', 'family', 'families',
+  'believer', 'believers', 'worshipper', 'worshippers', 'worshiper', 'worshipers',
+  'student', 'students', 'martyr', 'martyrs', 'pilgrim', 'pilgrims',
+  'monk', 'monks', 'nun', 'nuns', 'elder', 'elders',
+  // PT (fallback)
+  'deus', 'homem', 'homens', 'mulher', 'mulheres', 'pessoa', 'pessoas',
+  'humano', 'humanos', 'crianca', 'criancas', 'menino', 'meninos', 'menina', 'meninas',
+  'filho', 'filhos', 'filha', 'filhas', 'pai', 'mae', 'irmao', 'irmaos', 'irma', 'irmas',
+  'familia', 'jesus', 'cristo', 'anjo', 'anjos', 'santo', 'santos',
+  'discipulo', 'discipulos', 'apostolo', 'apostolos', 'profeta', 'profetas',
+  'rei', 'reis', 'rainha', 'sacerdote', 'sacerdotes', 'multidao', 'povo', 'povos',
+];
+const RE_FIGURA_HUMANA = new RegExp(`\\b(${FIGURAS_HUMANAS.join('|')})\\b`, 'i');
+
+/** Palavras com sentido plural de gente (cena em grupo — não forçar "uma pessoa só"). */
+const FIGURAS_PLURAIS = [
+  'men', 'women', 'people', 'children', 'crowds', 'multitudes',
+  'disciples', 'apostles', 'prophets', 'angels', 'saints', 'students',
+  'soldiers', 'servants', 'shepherds', 'believers', 'worshippers', 'worshipers',
+  'brothers', 'sisters', 'sons', 'daughters', 'families', 'groups',
+  'crowd', 'multitude', 'family', 'group',
+  'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve',
+];
+const RE_FIGURA_PLURAL = new RegExp(`\\b(${FIGURAS_PLURAIS.join('|')}|\\d+)\\b`, 'i');
+
+/** `true` se o prompt do roteiro pede alguma figura humana/divina. */
+export function temFiguraHumana(prompt) {
+  const semAcento = String(prompt ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '');
+  return RE_FIGURA_HUMANA.test(semAcento);
+}
+
+function semAcento(s) {
+  return String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+/**
+ * Anexa as regras de personagem a um prompt de imagem (idempotente):
+ *  - close-up de mão(s) → mantém o enquadramento, sem corpos nem figurantes;
+ *  - prompt COM figura no singular → exatamente 1 pessoa, iluminada e detalhada;
+ *  - prompt COM figuras no plural → exatamente as descritas, sem extras;
+ *  - prompt SEM figura → SEM_PESSOAS_IMAGEM (não inventar gente).
+ */
 export function anexarRegrasPersonagens(prompt) {
   const p = String(prompt ?? '').trim();
   if (!p) return p;
-  if (/character guidelines/i.test(p)) return p;
-  return `${p}, ${REGRAS_PERSONAGENS_IMAGEM}`;
+  if (/character guidelines/i.test(p)) return p; // regra legada — não duplica
+  if (/exactly one person in the image|exactly the people described|keep the close-up framing/i.test(p)) return p;
+  if (/no people,\s*no human figures/i.test(p)) return p;
+  const normalizado = semAcento(p);
+  if (/\bclose-?up\b/i.test(normalizado) && /\bhands?\b/i.test(normalizado) && !RE_FIGURA_PLURAL.test(normalizado)) {
+    return `${p}, ${REGRAS_CLOSE_UP_MAOS}`;
+  }
+  if (!temFiguraHumana(p)) return `${p}, ${SEM_PESSOAS_IMAGEM}`;
+  return RE_FIGURA_PLURAL.test(normalizado)
+    ? `${p}, ${REGRAS_PESSOA_PLURAL}`
+    : `${p}, ${REGRAS_PESSOA_SINGULAR}`;
 }
 
 /** Escapa texto para HTML (atributos/innerHTML). */

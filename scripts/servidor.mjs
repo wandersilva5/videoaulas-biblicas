@@ -702,13 +702,19 @@ const server = createServer(async (req, res) => {
       return arquivo(res, alvo);
     }
 
-    // ---- Estáticos (web/) ----
+    // ---- Estáticos (web/dist = build React; fallback legado web/) ----
     if (path === '/' || path.startsWith('/api/') === false) {
       const rel = path === '/' ? 'index.html' : path.replace(/^\/+/, '');
+      const dist = join(WEB_DIR, 'dist', rel);
+      if (dentroDe(WEB_DIR, dist) && existsSync(dist) && !statSync(dist).isDirectory()) {
+        return arquivo(res, dist);
+      }
       const alvo = join(WEB_DIR, rel);
       if (dentroDe(WEB_DIR, alvo) && existsSync(alvo) && !statSync(alvo).isDirectory()) {
         return arquivo(res, alvo);
       }
+      const fallbackDist = join(WEB_DIR, 'dist', 'index.html');
+      if (existsSync(fallbackDist)) return arquivo(res, fallbackDist);
       return arquivo(res, join(WEB_DIR, 'index.html'));
     }
 
@@ -738,36 +744,21 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { ok: true, slug, titulo_aula: novoTitulo });
     }
 
-    // --- DELETE /api/aulas/:slug — apaga aula e artefatos derivados ---
+    // --- DELETE /api/aulas/:slug — apaga a aula inteira (roteiro + artefatos) ---
     if (recurso === 'aulas' && !acao && req.method === 'DELETE') {
       if (!slug || !ehSlugValido(slug)) return json(res, 400, { erro: 'Slug inválido' });
       const outDir = join(OUTPUT_DIR, slug);
       if (!existsSync(outDir)) return json(res, 404, { erro: 'Aula não encontrada' });
-      // Remover apenas artefatos gerados (não o roteiro.json nem material.txt)
-      const artefatosParaRemover = [
-        'imagens', 'audios', 'videos', 'manifesto.json',
-        'roteiro-short.json', 'questionario.json',
-        'enriquecimento.json', 'material.txt'
-      ];
-      for (const artefato of artefatosParaRemover) {
-        const caminho = join(outDir, artefato);
-        if (existsSync(caminho)) {
-          try {
-            await rm(caminho, { recursive: true, force: true });
-          } catch {
-            /* ignora erros de remoção individual */
-          }
-        }
+      try {
+        await rm(outDir, { recursive: true, force: true });
+      } catch (e) {
+        return json(res, 500, { erro: `Falha ao excluir a aula: ${e.message}` });
       }
       // Remover PDF se existir
       const pdf = join(PDFS_DIR, `${slug}-estudo.pdf`);
       if (existsSync(pdf)) await rm(pdf, { force: true });
-      // Listar o que restou para reportar
-      const restante = (await readdir(outDir, { withFileTypes: true }))
-        .filter((d) => d.isDirectory() || d.name.endsWith('.json') || d.name.endsWith('.txt'))
-        .map((d) => d.name);
-      console.error(`[aulas] Removidos artefatos de "${slug}" (restou: ${restante.join(', ')})`);
-      return json(res, 200, { ok: true, removidos: artefatosParaRemover.length, restante });
+      console.error(`[aulas] Aula "${slug}" excluída`);
+      return json(res, 200, { ok: true, slug });
     }
 
     if (recurso === 'config') {

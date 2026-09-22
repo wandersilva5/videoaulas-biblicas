@@ -1306,7 +1306,14 @@ async function carregarAulas() {
   for (const a of aulas) {
     const card = document.createElement('div');
     card.className = 'card-aula';
-    card.onclick = () => abrirAula(a.slug);
+    // Ignora cliques nos botões (✏️/🗑): eles têm handler próprio na
+    // delegação de #lista-aulas. Sem isso, o clique na lixeira borbulha até
+    // o card e abre a aula junto com a exclusão (o stopPropagation na
+    // delegação chega tarde demais, pois o card está abaixo no caminho).
+    card.onclick = (ev) => {
+      if (ev.target.closest('button')) return;
+      abrirAula(a.slug);
+    };
     const badges = [
       a.imagensCompletas ? '<span class="badge ok">✓ imagens</span>' : '<span class="badge alerta">imagens</span>',
       a.audioCompleto ? '<span class="badge ok">✓ áudio</span>' : '<span class="badge alerta">áudio</span>',

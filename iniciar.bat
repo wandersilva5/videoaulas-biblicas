@@ -6,10 +6,11 @@ title Estudio de Videoaulas - Controlador
 
 rem =====================================================================
 rem  Estudio de Videoaulas - inicializacao
-rem  Verifica/sobe os 3 servidores e encerra todos ao fechar esta janela.
+rem  Verifica/sobe os servidores e encerra todos ao fechar esta janela.
 rem   1) llama-server  -> http://127.0.0.1:8091   (roteiro)
 rem   2) ComfyUI       -> http://127.0.0.1:8188   (imagens)
-rem   3) servidor web  -> http://localhost:PORTA  (interface)
+rem   3) interface web -> build React (frontend\ -> web\dist)
+rem   4) servidor web  -> http://localhost:PORTA  (interface)
 rem =====================================================================
 
 set "LLAMA_EXE=E:\llama.cpp\llama-server.exe"
@@ -42,6 +43,7 @@ echo ================================================================
 echo.
 echo   llama-server  . porta %LLAMA_PORT%   (gera os roteiros)
 echo   ComfyUI       . porta %COMFY_PORT%   (gera as imagens)
+echo   interface web . build React          (frontend -^> web\dist)
 echo   servidor web  . porta %PORTA%        (interface)
 echo.
 echo   Iniciando servidores... mantenha esta janela aberta.
@@ -50,11 +52,11 @@ echo.
 
 call :verificar_http "http://127.0.0.1:%LLAMA_PORT%/v1/models" LLAMA_OK
 if "!LLAMA_OK!"=="1" (
-  echo   [1/3] llama-server ........ JA EM EXECUCAO
-  echo   [1/3] llama-server ........ JA EM EXECUCAO >> "%LOG_FILE%"
+  echo   [1/4] llama-server ........ JA EM EXECUCAO
+  echo   [1/4] llama-server ........ JA EM EXECUCAO >> "%LOG_FILE%"
 ) else (
-  echo   [1/3] llama-server ........ iniciando ^(carga do modelo ~5-8 min^)...
-  echo   [1/3] llama-server ........ iniciando... >> "%LOG_FILE%"
+  echo   [1/4] llama-server ........ iniciando ^(carga do modelo ~5-8 min^)...
+  echo   [1/4] llama-server ........ iniciando... >> "%LOG_FILE%"
   start "llama-server" /min "%LLAMA_EXE%" -m "%LLAMA_MODEL%" --port %LLAMA_PORT% -c 8192 --n-gpu-layers 20 --no-webui --reasoning off
   call :aguardar_http "http://127.0.0.1:%LLAMA_PORT%/v1/models" LLAMA_OK 720 "llama-server"
   if "!LLAMA_OK!"=="1" (
@@ -69,11 +71,11 @@ call :registrar_pid "%LLAMA_PORT%" llama-server
 
 call :verificar_http "http://127.0.0.1:%COMFY_PORT%/" COMFY_OK
 if "!COMFY_OK!"=="1" (
-  echo   [2/3] ComfyUI ............. JA EM EXECUCAO
-  echo   [2/3] ComfyUI ............. JA EM EXECUCAO >> "%LOG_FILE%"
+  echo   [2/4] ComfyUI ............. JA EM EXECUCAO
+  echo   [2/4] ComfyUI ............. JA EM EXECUCAO >> "%LOG_FILE%"
 ) else (
-  echo   [2/3] ComfyUI ............. iniciando ^(1-3 min^)...
-  echo   [2/3] ComfyUI ............. iniciando... >> "%LOG_FILE%"
+  echo   [2/4] ComfyUI ............. iniciando ^(1-3 min^)...
+  echo   [2/4] ComfyUI ............. iniciando... >> "%LOG_FILE%"
   start "ComfyUI" /min cmd /d "%COMFY_DIR%" /c "%COMFY_BAT%"
   call :aguardar_http "http://127.0.0.1:%COMFY_PORT%/" COMFY_OK 240 "ComfyUI"
   if "!COMFY_OK!"=="1" (
@@ -86,13 +88,54 @@ if "!COMFY_OK!"=="1" (
 )
 call :registrar_pid "%COMFY_PORT%" python
 
+rem ---- [3/4] Interface web (build React: frontend\ -> web\dist) ----
+echo   [3/4] interface web ....... compilando...
+echo   [3/4] interface web ....... compilando... >> "%LOG_FILE%"
+set "WEB_BUILD_OK=0"
+if not exist "frontend\package.json" (
+  echo         [ERRO] pasta frontend\ nao encontrada - build ignorado.
+  echo         [ERRO] pasta frontend\ nao encontrada - build ignorado. >> "%LOG_FILE%"
+) else (
+  if not exist "frontend\node_modules" (
+    echo         instalando dependencias ^(npm install^)...
+    echo         instalando dependencias ^(npm install^)... >> "%LOG_FILE%"
+    pushd frontend
+    call npm install --no-audit --no-fund >> "%LOG_FILE%" 2>&1
+    if errorlevel 1 (
+      echo         [ERRO] npm install falhou. Veja .iniciar.log.
+      echo         [ERRO] npm install falhou. >> "%LOG_FILE%"
+    )
+    popd
+  )
+  if exist "frontend\node_modules" (
+    pushd frontend
+    call npm run build >> "%LOG_FILE%" 2>&1
+    if errorlevel 1 (
+      echo         [ERRO] build da interface falhou. Veja .iniciar.log.
+      echo         [ERRO] build da interface falhou. >> "%LOG_FILE%"
+    ) else (
+      set "WEB_BUILD_OK=1"
+      echo         [OK] interface compilada em web\dist.
+      echo         [OK] interface compilada em web\dist. >> "%LOG_FILE%"
+    )
+    popd
+  ) else (
+    echo         [ERRO] sem node_modules - build ignorado.
+    echo         [ERRO] sem node_modules - build ignorado. >> "%LOG_FILE%"
+  )
+)
+if "!WEB_BUILD_OK!"=="0" (
+  echo         [aviso] subindo com a interface anterior ^(fallback em web\^).
+  echo         [aviso] subindo com a interface anterior ^(fallback em web\^). >> "%LOG_FILE%"
+)
+
 call :verificar_http "http://127.0.0.1:%PORTA%/" WEB_OK
 if "!WEB_OK!"=="1" (
-  echo   [3/3] servidor web ........ JA EM EXECUCAO
-  echo   [3/3] servidor web ........ JA EM EXECUCAO >> "%LOG_FILE%"
+  echo   [4/4] servidor web ........ JA EM EXECUCAO
+  echo   [4/4] servidor web ........ JA EM EXECUCAO >> "%LOG_FILE%"
 ) else (
-  echo   [3/3] servidor web ........ iniciando...
-  echo   [3/3] servidor web ........ iniciando... >> "%LOG_FILE%"
+  echo   [4/4] servidor web ........ iniciando...
+  echo   [4/4] servidor web ........ iniciando... >> "%LOG_FILE%"
   start "servidor-videoaulas" /min cmd /c "set PORTA=%PORTA%&& node scripts\servidor.mjs"
   call :aguardar_http "http://127.0.0.1:%PORTA%/" WEB_OK 30 "servidor web"
   if "!WEB_OK!"=="1" (
@@ -110,6 +153,7 @@ echo.
 echo ================================================================
 if "!LLAMA_OK!"=="1" ( echo   llama-server  : OK ) else ( echo   llama-server  : PROBLEMA )
 if "!COMFY_OK!"=="1" ( echo   ComfyUI      : OK ) else ( echo   ComfyUI      : PROBLEMA )
+if "!WEB_BUILD_OK!"=="1" ( echo   interface web : OK ^(build^) ) else ( echo   interface web : FALLBACK )
 if "!WEB_OK!"=="1"   ( echo   servidor web : OK ) else ( echo   servidor web : PROBLEMA )
 echo.
 if "!LLAMA_OK!"=="1" if "!COMFY_OK!"=="1" if "!WEB_OK!"=="1" (
@@ -167,9 +211,9 @@ goto :aguardar_loop
 
 :registrar_pid
 rem %1 = porta   %2 = nome esperado do processo (substring)
-rem Só registra o PID se o processo que escuta a porta for o esperado
+rem S?? registra o PID se o processo que escuta a porta for o esperado
 rem (ex.: llama-server.exe / python.exe do ComfyUI / node.exe do servidor web).
-rem Assim nunca encerramos um processo não relacionado que já ocupe a porta.
+rem Assim nunca encerramos um processo n??o relacionado que j?? ocupe a porta.
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr /r ":%1 " ^| findstr "LISTENING"') do (
   if not "%%p"=="" (
     for /f "usebackq delims=" %%n in (`powershell -NoProfile -Command "(Get-Process -Id %%p -ErrorAction SilentlyContinue).ProcessName"`) do (
@@ -188,3 +232,4 @@ for /f "tokens=5" %%p in ('netstat -ano ^| findstr /r ":%1 " ^| findstr "LISTENI
   exit /b 0
 )
 exit /b 0
+

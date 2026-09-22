@@ -167,8 +167,12 @@ async function regerarPromptsImagemDuplicados(roteiro) {
   const vistos = new Map();
   const duplicados = new Set();
   for (const s of roteiro.slides) {
-    const p = String(s.imagem_prompt || '').trim();
-    if (!p) continue;
+    const p = textoDePrompt(s.imagem_prompt).trim().toLowerCase();
+    if (!p || ehPromptQuebrado(p)) {
+      // Prompt quebrado conta como duplicado: precisa ser regerado.
+      duplicados.add(s.id);
+      continue;
+    }
     if (vistos.has(p)) duplicados.add(s.id);
     vistos.set(p, (vistos.get(p) || 0) + 1);
   }
@@ -223,8 +227,8 @@ async function regerarPromptsImagemDuplicados(roteiro) {
 
   let corrigidos = 0;
   alvo.forEach((s, i) => {
-    const novo = String(prompts[i] || '').trim();
-    if (novo.length > 5) {
+    const novo = textoDePrompt(prompts[i]).trim();
+    if (novo.length > 5 && !ehPromptQuebrado(novo)) {
       s.imagem_prompt = limparTextoDePromptImagem(novo);
       corrigidos++;
     }
@@ -321,9 +325,35 @@ const contarPalavras = (s) => String(s ?? '').trim().split(/\s+/).filter(Boolean
 const padSlide = (i) => String(i + 1).padStart(2, '0');
 
 /**
+ * Extrai texto de um campo que deveria ser string, mas o modelo às vezes
+ * devolve como objeto (ex.: {"prompt": "..."} ou {"descricao": "..."}).
+ * Retorna "" quando não há texto aproveitável — o que força erro de
+ * validação (→ retry) em vez de salvar "[object Object]".
+ */
+function textoDePrompt(valor) {
+  if (typeof valor === 'string') return valor;
+  if (valor && typeof valor === 'object') {
+    for (const chave of ['prompt', 'imagem_prompt', 'descricao', 'descrição', 'description', 'cena', 'texto', 'text']) {
+      if (typeof valor[chave] === 'string' && valor[chave].trim()) return valor[chave];
+    }
+    const vals = Object.values(valor).filter((v) => typeof v === 'string' && v.trim());
+    if (vals.length === 1) return vals[0];
+    if (vals.length > 1) return vals.join(' ');
+  }
+  return '';
+}
+
+/** `true` se o prompt é o artefato de coerção `String(objeto)` — nunca válido. */
+function ehPromptQuebrado(p) {
+  return /\[object\s+Object\]/i.test(String(p ?? ''));
+}
+
+/**
  * Normaliza campos triviais do roteiro que o modelo pode esquecer ou escrever
  * fora do padrão: id sequencial "slide-NN", titulo não vazio e pontos como lista.
- * Narração/imagem_prompt vazios NÃO são corrigidos aqui (viram erro → regera).
+ * Narração vazia NÃO é corrigida aqui (vira erro → regera). `imagem_prompt`
+ * objeto é extraído para string (ou esvaziado, forçando retry) para nunca
+ * salvar "[object Object]".
  * Retorna o número de ajustes feitos.
  */
 export function repararRoteiro(roteiro) {
@@ -341,6 +371,14 @@ export function repararRoteiro(roteiro) {
   roteiro.introducao = narrar(roteiro.introducao);
   roteiro.conclusao = narrar(roteiro.conclusao);
 
+  // Prompts de capa: objeto → extrai texto (ou esvazia, virando aviso na validação).
+  for (const campo of ['introducao_imagem_prompt', 'conclusao_imagem_prompt']) {
+    if (campo in roteiro && typeof roteiro[campo] !== 'string') {
+      roteiro[campo] = textoDePrompt(roteiro[campo]);
+      reparos++;
+    }
+  }
+
   roteiro.slides.forEach((s, i) => {
     if (!s || typeof s !== 'object') return;
     const num = padSlide(i);
@@ -357,6 +395,10 @@ export function repararRoteiro(roteiro) {
       reparos++;
     }
     s.narracao = narrar(s.narracao);
+    if ('imagem_prompt' in s && typeof s.imagem_prompt !== 'string') {
+      s.imagem_prompt = textoDePrompt(s.imagem_prompt);
+      reparos++;
+    }
   });
   return reparos;
 }
@@ -382,9 +424,13 @@ export function validarRoteiro(roteiro, { minSlides = 15 } = {}) {
   if (typeof roteiro.conclusao !== 'string' || !roteiro.conclusao.trim()) erros.push('conclusao vazia');
   if (typeof roteiro.introducao_imagem_prompt !== 'string' || !roteiro.introducao_imagem_prompt.trim()) {
     avisos.push('introducao_imagem_prompt ausente (será usado o prompt padrão da capa)');
+  } else if (ehPromptQuebrado(roteiro.introducao_imagem_prompt)) {
+    erros.push('introducao_imagem_prompt quebrado ("[object Object]" — objeto coagido a string)');
   }
   if (typeof roteiro.conclusao_imagem_prompt !== 'string' || !roteiro.conclusao_imagem_prompt.trim()) {
     avisos.push('conclusao_imagem_prompt ausente (será usado o prompt padrão da capa)');
+  } else if (ehPromptQuebrado(roteiro.conclusao_imagem_prompt)) {
+    erros.push('conclusao_imagem_prompt quebrado ("[object Object]" — objeto coagido a string)');
   }
 
   if (!Array.isArray(roteiro.slides)) {
@@ -423,8 +469,22 @@ export function validarRoteiro(roteiro, { minSlides = 15 } = {}) {
     }
 
     if (typeof s.imagem_prompt !== 'string' || !s.imagem_prompt.trim()) erros.push(`${r}: imagem_prompt vazio`);
+    else if (ehPromptQuebrado(s.imagem_prompt)) erros.push(`${r}: imagem_prompt quebrado ("[object Object]" — objeto coagido a string)`);
     else if (contarPalavras(s.imagem_prompt) < 5) avisos.push(`${r}: imagem_prompt muito curto (${contarPalavras(s.imagem_prompt)} palavras)`);
   });
+
+  // Prompts de imagem duplicados (incluindo capas iguais a slides): o modelo
+  // costuma copiar o exemplo do system prompt. Vira erro → retry, antes do
+  // `regerarPromptsImagemDuplicados` tentar o conserto local.
+  const todosPrompts = [
+    ...(typeof roteiro.introducao_imagem_prompt === 'string' && roteiro.introducao_imagem_prompt.trim() ? [roteiro.introducao_imagem_prompt.trim().toLowerCase()] : []),
+    ...roteiro.slides.map((s) => (typeof s?.imagem_prompt === 'string' ? s.imagem_prompt.trim().toLowerCase() : '')).filter(Boolean),
+    ...(typeof roteiro.conclusao_imagem_prompt === 'string' && roteiro.conclusao_imagem_prompt.trim() ? [roteiro.conclusao_imagem_prompt.trim().toLowerCase()] : []),
+  ];
+  const unicos = new Set(todosPrompts);
+  if (todosPrompts.length > 0 && unicos.size < todosPrompts.length) {
+    erros.push(`prompts de imagem duplicados (${todosPrompts.length - unicos.size} repetição(ões) entre capas e slides — cada cena deve ser única)`);
+  }
 
   return { valido: erros.length === 0, erros, avisos };
 }
