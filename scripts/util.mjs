@@ -104,6 +104,28 @@ export function musicaFundo(env = process.env) {
   return env.MUSICA_FUNDO || join(dirname(fileURLToPath(import.meta.url)), '..', 'musica', 'fundo.mp3');
 }
 
+/**
+ * Gera uma trilha de música em loop com a duração da narração/vídeo.
+ * Repete a música (`-stream_loop`) e corta (`-t`) no tamanho alvo, para que
+ * ela cubra o vídeo inteiro e termine junto com a narração — sem deixar o
+ * trecho final em silêncio. Volume e fades continuam aplicados no mux
+ * (`musicVolumeDb`/`fadeInSec`/`fadeOutSec` do soundtrack).
+ */
+export function prepararMusicaEmLoop(musicaPath, duracaoAlvoSec, outPath) {
+  const dur = Math.max(1, Number(duracaoAlvoSec) || 0);
+  const args = ['-y', '-stream_loop', '-1', '-i', musicaPath, '-t', dur.toFixed(2), '-c:a', 'libmp3lame', '-b:a', '192k', outPath];
+  return new Promise((resolve, reject) => {
+    const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    proc.stderr.on('data', (d) => (stderr += d.toString()));
+    proc.on('error', reject);
+    proc.on('exit', (code) => {
+      if (code === 0) resolve(outPath);
+      else reject(new Error(`ffmpeg musica-loop exit ${code}: ${stderr.slice(-1000)}`));
+    });
+  });
+}
+
 /** Prompt da imagem de capa (abertura) — do roteiro ou derivado se ausente (roteiros antigos). */
 export function imagemPromptIntro(roteiro) {
   if (roteiro?.introducao_imagem_prompt?.trim()) return roteiro.introducao_imagem_prompt;

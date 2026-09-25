@@ -15,7 +15,7 @@ import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { prefixoNarracao, esc, musicaFundo, dirsEstudo, garantirDirsEstudo, exportarMp4ComRetry } from './util.mjs';
+import { prefixoNarracao, esc, musicaFundo, prepararMusicaEmLoop, dirsEstudo, garantirDirsEstudo, exportarMp4ComRetry } from './util.mjs';
 import {
   AssetStore,
   EngineRegistry,
@@ -34,8 +34,9 @@ const HEIGHT = Number(process.env.VIDEO_HEIGHT) || 1920;
 const SLIDE_PADDING_SEC = process.env.VIDEO_PADDING !== undefined && process.env.VIDEO_PADDING !== '' ? Number(process.env.VIDEO_PADDING) : 0.2;
 
 const MUSICA_FUNDO = process.env.MUSICA_FUNDO ?? musicaFundo();
-const MUSICA_VOLUME_DB = Number(process.env.MUSICA_VOLUME_DB || -20);
+const MUSICA_VOLUME_DB = Number(process.env.MUSICA_VOLUME_DB || -28);
 const MUSICA_FADE_IN_SEC = Number(process.env.MUSICA_FADE_IN_SEC || 1);
+const MUSICA_FADE_OUT_SEC = Number(process.env.MUSICA_FADE_OUT_SEC || 3);
 
 const MAX_DURACAO_SHORT = 58;
 
@@ -332,8 +333,11 @@ console.error('  Gerando narração do short via TTS...');
   let proj = await orchestrator.addFileAsset(project.id, narracaoPath, 'Narração Short');
   assetsProjeto.push(proj.assets[proj.assets.length - 1]);
   if (MUSICA_FUNDO && existsSync(MUSICA_FUNDO)) {
-    console.error(`  música de fundo: ${MUSICA_FUNDO} (${MUSICA_VOLUME_DB} dB, fade in ${MUSICA_FADE_IN_SEC}s)`);
-    proj = await orchestrator.addFileAsset(project.id, MUSICA_FUNDO, 'Música de fundo');
+    const durVideo = nodes.reduce((s, n) => s + (n.durationSec || 0), 0);
+    const musicaLoop = join(tempNarracaoDir, 'short-musica-loop.mp3');
+    await prepararMusicaEmLoop(MUSICA_FUNDO, durVideo + 0.5, musicaLoop);
+    console.error(`  música de fundo em loop: ${MUSICA_FUNDO} (${MUSICA_VOLUME_DB} dB, fade in ${MUSICA_FADE_IN_SEC}s, fade out ${MUSICA_FADE_OUT_SEC}s)`);
+    proj = await orchestrator.addFileAsset(project.id, musicaLoop, 'Música de fundo');
     assetsProjeto.push(proj.assets[proj.assets.length - 1]);
   }
   proj.soundtrack = {
@@ -344,6 +348,7 @@ console.error('  Gerando narração do short via TTS...');
     proj.soundtrack.musicAssetId = assetsProjeto[1].id;
     proj.soundtrack.musicVolumeDb = MUSICA_VOLUME_DB;
     proj.soundtrack.fadeInSec = MUSICA_FADE_IN_SEC;
+    proj.soundtrack.fadeOutSec = MUSICA_FADE_OUT_SEC;
   }
   await projects.save(proj);
 

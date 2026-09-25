@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { esc, concatenarAudiosComGaps, PREFIX_INTRO_QUESTIONARIO, TEXTO_INTRO_QUESTIONARIO, musicaFundo, dirsEstudo, garantirDirsEstudo, exportarMp4ComRetry } from './util.mjs';
+import { esc, concatenarAudiosComGaps, PREFIX_INTRO_QUESTIONARIO, TEXTO_INTRO_QUESTIONARIO, musicaFundo, prepararMusicaEmLoop, dirsEstudo, garantirDirsEstudo, exportarMp4ComRetry } from './util.mjs';
 import { gerarNarracaoItem } from './gerar_narracao.mjs';
 import {
   AssetStore,
@@ -22,11 +22,14 @@ const FPS = Number(process.env.VIDEO_FPS) || 24;
 const WIDTH = Number(process.env.VIDEO_WIDTH) || 1920;
 const HEIGHT = Number(process.env.VIDEO_HEIGHT) || 1080;
 
-// Música de fundo: volume baixo (dB) para não competir com a voz + fade in suave.
+// Música de fundo: volume baixo (dB) para não competir com a voz + fade in/out suaves.
+// Repetida em loop até a duração da narração, para cobrir o vídeo inteiro e
+// terminar junto com ela (sem trecho final em silêncio).
 // Defina MUSICA_FUNDO='' para desligar, MUSICA_VOLUME_DB para ajustar o nível.
 const MUSICA_FUNDO = process.env.MUSICA_FUNDO ?? musicaFundo();
-const MUSICA_VOLUME_DB = Number(process.env.MUSICA_VOLUME_DB || -20);
+const MUSICA_VOLUME_DB = Number(process.env.MUSICA_VOLUME_DB || -28);
 const MUSICA_FADE_IN_SEC = Number(process.env.MUSICA_FADE_IN_SEC || 2);
+const MUSICA_FADE_OUT_SEC = Number(process.env.MUSICA_FADE_OUT_SEC || 3);
 
 const s = (v) => (v * (WIDTH / 1920)).toFixed(1);
 
@@ -370,8 +373,11 @@ async function main() {
   let proj = await orchestrator.addFileAsset(project.id, narracaoFull, 'Narração Completa Quiz');
   assetsProjeto.push(proj.assets[proj.assets.length - 1]);
   if (MUSICA_FUNDO && existsSync(MUSICA_FUNDO)) {
-    console.error(`  música de fundo: ${MUSICA_FUNDO} (${MUSICA_VOLUME_DB} dB, fade in ${MUSICA_FADE_IN_SEC}s)`);
-    proj = await orchestrator.addFileAsset(project.id, MUSICA_FUNDO, 'Música de fundo quiz');
+    const durNarracao = await medirDuracaoMp3(narracaoFull);
+    const musicaLoop = join(audiosDir, 'questionario-musica-loop.mp3');
+    await prepararMusicaEmLoop(MUSICA_FUNDO, durNarracao + 0.5, musicaLoop);
+    console.error(`  música de fundo em loop: ${MUSICA_FUNDO} (${MUSICA_VOLUME_DB} dB, fade in ${MUSICA_FADE_IN_SEC}s, fade out ${MUSICA_FADE_OUT_SEC}s)`);
+    proj = await orchestrator.addFileAsset(project.id, musicaLoop, 'Música de fundo quiz');
     assetsProjeto.push(proj.assets[proj.assets.length - 1]);
   }
   proj.soundtrack = {
@@ -382,6 +388,7 @@ async function main() {
     proj.soundtrack.musicAssetId = assetsProjeto[1].id;
     proj.soundtrack.musicVolumeDb = MUSICA_VOLUME_DB;
     proj.soundtrack.fadeInSec = MUSICA_FADE_IN_SEC;
+    proj.soundtrack.fadeOutSec = MUSICA_FADE_OUT_SEC;
   }
   await projects.save(proj);
 
