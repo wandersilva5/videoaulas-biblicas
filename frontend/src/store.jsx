@@ -9,9 +9,11 @@ const LOGS_EXECUCOES_RETIDAS = 3;
 // Lê a rota inicial do hash para o primeiro render já nascer na página
 // certa (sem isso, o efeito de sincronização apagaria o hash no mount,
 // antes do boot tentar restaurá-lo).
+// #/aula/<slug> = resumo do estudo; #/aula/<slug>/<etapa> = passo da aula.
 function lerHashInicial() {
   const m = /^#\/aula\/([a-z0-9-]+)(?:\/(\d+))?$/.exec(window.location.hash || '');
   if (!m) return { tela: 'dashboard', slug: null, etapa: 1 };
+  if (!m[2]) return { tela: 'resumo', slug: m[1], etapa: 1 };
   return { tela: 'aula', slug: m[1], etapa: Math.min(8, Math.max(1, Number(m[2]) || 1)) };
 }
 
@@ -46,6 +48,10 @@ export function StudioProvider({ children }) {
   const [toastState, setToastState] = useState(null);
   // Barras de progresso das montagens (etapa 4 = vídeo, 5/6 = short).
   const [progresso, setProgresso] = useState({ video: null, short: null });
+  // Arquivos de imagem em geração neste momento (ex.: {"slide-05.png": true}).
+  // Permite acender o spinner no card exato, inclusive ao regenerar uma imagem
+  // que já existe (antes só aparecia algo quando o PNG ainda não existia).
+  const [imgsGerando, setImgsGerando] = useState({});
 
   const toastTimer = useRef(null);
   const jobClearT = useRef(null);
@@ -115,6 +121,7 @@ export function StudioProvider({ children }) {
     if (nome === 'dashboard') carregarAulas().catch(() => {});
   }, [carregarAulas]);
 
+  // Resumo do estudo: abre a aula e cai na tela de resumo (cards dos passos).
   const abrirAula = useCallback(async (sg) => {
     setSlug(sg);
     setEtapa(1);
@@ -125,14 +132,28 @@ export function StudioProvider({ children }) {
     ]);
     setRoteiro(r);
     setArtefatos(st);
+    setTela('resumo');
+  }, []);
+
+  // Passo clicado no resumo: entra no workspace já na etapa escolhida.
+  const abrirEtapa = useCallback((n) => {
+    setEtapa(Math.min(8, Math.max(1, Number(n) || 1)));
     setTela('aula');
   }, []);
 
+  const verResumo = useCallback(() => {
+    setTela('resumo');
+  }, []);
+
   // ---- Roteamento por hash: a URL reflete a tela atual
-  // (#/ ou #/aula/<slug>/<etapa>) para que F5 e voltar/avançar
-  // permaneçam na página em vez de cair na home. ----
+  // (#/ ou #/aula/<slug> = resumo ou #/aula/<slug>/<etapa>) para que F5 e
+  // voltar/avançar permaneçam na página em vez de cair na home. ----
   useEffect(() => {
-    const desejado = tela === 'aula' && slug ? `#/aula/${slug}/${etapa}` : '#/';
+    let desejado = '#/';
+    if (slug) {
+      desejado = tela === 'aula' ? `#/aula/${slug}/${etapa}` : `#/aula/${slug}`;
+      if (tela === 'dashboard') desejado = '#/';
+    }
     if (window.location.hash !== desejado) {
       window.history.replaceState(null, '', desejado);
     }
@@ -141,7 +162,7 @@ export function StudioProvider({ children }) {
   const rotaAula = useCallback(() => {
     const m = /^#\/aula\/([a-z0-9-]+)(?:\/(\d+))?$/.exec(window.location.hash || '');
     if (!m) return null;
-    return { slug: m[1], etapa: Math.min(8, Math.max(1, Number(m[2]) || 1)) };
+    return { slug: m[1], etapa: m[2] ? Math.min(8, Math.max(1, Number(m[2]) || 1)) : null };
   }, []);
 
   useEffect(() => {
@@ -150,10 +171,13 @@ export function StudioProvider({ children }) {
       if (rota) {
         if (rota.slug !== slugRef.current) {
           abrirAula(rota.slug)
-            .then(() => setEtapa(rota.etapa))
+            .then(() => { if (rota.etapa != null) abrirEtapa(rota.etapa); })
             .catch(() => mostrarTela('dashboard'));
-        } else {
+        } else if (rota.etapa != null) {
           setEtapa(rota.etapa);
+          setTela('aula');
+        } else {
+          setTela('resumo');
         }
       } else if (telaRef.current !== 'dashboard') {
         mostrarTela('dashboard');
@@ -161,7 +185,7 @@ export function StudioProvider({ children }) {
     };
     window.addEventListener('hashchange', aoMudarHash);
     return () => window.removeEventListener('hashchange', aoMudarHash);
-  }, [abrirAula, mostrarTela, rotaAula]);
+  }, [abrirAula, abrirEtapa, mostrarTela, rotaAula]);
 
   // ---- Aulas: renomear / excluir (com atualização de estado, sem depender só de refetch) ----
   const renomearAula = useCallback(async (sg, tituloAtual) => {
@@ -287,6 +311,13 @@ export function StudioProvider({ children }) {
     setProgresso((ant) => ({ ...ant, [area]: { pct, texto } }));
   }, []);
 
+  // Marca um PNG como "sendo gerado" de forma otimista (no clique), antes do
+  // SSE confirmar. O 'fim' do job e o 'artefato' (PNG pronto) limpam a marca.
+  const marcarImgGerando = useCallback((arquivo) => {
+    if (!arquivo) return;
+    setImgsGerando((ant) => ({ ...ant, [String(arquivo).toLowerCase()]: true }));
+  }, []);
+
   const marcarJob = useCallback((j) => setJob(j), []);
 
   // ---- Sondagem do job no servidor (cobre reload no meio de um job) ----
@@ -316,7 +347,7 @@ export function StudioProvider({ children }) {
       });
       clearTimeout(jobClearT.current);
       jobClearT.current = setTimeout(() => setJob(null), 8000);
-      if (telaRef.current === 'aula') carregarArtefatos().catch(() => {});
+      if (telaRef.current === 'aula' || telaRef.current === 'resumo') carregarArtefatos().catch(() => {});
     } else if (!atual && d.ultimo && d.ultimo.jobId !== ultimoJobIdVisto.current) {
       ultimoJobIdVisto.current = d.ultimo.jobId;
       const ult = d.ultimo;
@@ -327,19 +358,34 @@ export function StudioProvider({ children }) {
       });
       clearTimeout(jobClearT.current);
       jobClearT.current = setTimeout(() => setJob(null), 8000);
-      if (telaRef.current === 'aula') carregarArtefatos().catch(() => {});
+      if (telaRef.current === 'aula' || telaRef.current === 'resumo') carregarArtefatos().catch(() => {});
     }
   }, [carregarArtefatos]);
 
   // ---- SSE /api/progresso ----
   useEffect(() => {
     const sse = new EventSource('/api/progresso');
+    // Recarrega a grade de imagens à medida que cada PNG fica pronto, sem
+    // esperar o 'fim' do job. Throttle de ~800ms evita rajadas de /artefatos.
+    let ultimoRefreshImagens = 0;
+    let timerRefreshImagens = null;
+    const recarregarGradeImagens = () => {
+      if (telaRef.current !== 'aula' && telaRef.current !== 'resumo') return;
+      const agora = Date.now();
+      const espera = Math.max(0, 800 - (agora - ultimoRefreshImagens));
+      clearTimeout(timerRefreshImagens);
+      timerRefreshImagens = setTimeout(() => {
+        ultimoRefreshImagens = Date.now();
+        carregarArtefatos().catch(() => {});
+      }, espera);
+    };
     const onProgresso = (ev) => {
       const msg = JSON.parse(ev.data);
       if (msg.tipo === 'inicio') {
         setJobAtivo(true);
         clearTimeout(jobClearT.current);
         setJob({ jobId: msg.jobId, etapa: msg.etapa, status: 'rodando', msg: 'Preparando…', iniciadoEm: msg.iniciadoEm || Date.now() });
+        if (msg.etapa === 'imagens') setImgsGerando({});
       }
       if (msg.tipo === 'progress') {
         setJob((ant) => {
@@ -352,13 +398,36 @@ export function StudioProvider({ children }) {
       }
       if (msg.tipo === 'erro') {
         setJob((ant) => (ant?.etapa === msg.etapa ? { ...ant, status: 'erro', msg: msg.linha } : ant));
-        if (telaRef.current === 'aula') setLogAberto(true);
+        if (telaRef.current === 'aula' || telaRef.current === 'resumo') setLogAberto(true);
       }
       if (msg.tipo === 'log') {
         setJob((ant) => (ant?.etapa === msg.etapa ? { ...ant, status: 'rodando', msg: msg.linha } : ant));
       }
+      // Cada imagem pronta chega como 'artefato' (novo) ou 'ok' (compat):
+      // mostra no banner e recarrega só a grade, sem esperar o job acabar.
+      // 'artefato-inicio' acende o spinner no card exato; 'artefato' apaga.
+      if (msg.etapa === 'imagens' && msg.tipo === 'artefato-inicio') {
+        const arq = String(msg.linha || '').toLowerCase();
+        setImgsGerando((ant) => ({ ...ant, [arq]: true }));
+        setJob((ant) => (ant?.etapa === msg.etapa ? { ...ant, status: 'rodando', msg: `Gerando ${arq}…` } : ant));
+      }
+      if (msg.etapa === 'imagens' && (msg.tipo === 'artefato' || msg.tipo === 'ok')) {
+        const rotulo = msg.tipo === 'artefato' ? `Imagem pronta: ${msg.linha}` : msg.linha;
+        setJob((ant) => (ant?.etapa === msg.etapa ? { ...ant, status: 'rodando', msg: rotulo } : ant));
+        const base = String(msg.linha || '').split(/[\\/]/).pop().toLowerCase().split('?')[0];
+        if (/^slide-\d+\.png$/.test(base)) {
+          setImgsGerando((ant) => {
+            if (!ant[base]) return ant;
+            const prox = { ...ant };
+            delete prox[base];
+            return prox;
+          });
+        }
+        recarregarGradeImagens();
+      }
       if (msg.tipo === 'fim') {
         setJobAtivo(false);
+        if (msg.etapa === 'imagens') setImgsGerando({});
         if (etapaRef.current === 4 || etapaRef.current === 5 || etapaRef.current === 6) {
           const area = etapaRef.current === 4 ? 'video' : 'short';
           const textoOk = etapaRef.current === 4 ? 'Vídeo pronto!' : (etapaRef.current === 5 ? 'Roteiro Short pronto!' : 'Short pronto!');
@@ -369,11 +438,11 @@ export function StudioProvider({ children }) {
           status: msg.ok ? 'ok' : 'erro',
           msg: msg.ok ? 'Processo finalizado com sucesso.' : msg.cancelado ? 'Job cancelado pelo usuário.' : 'Falha na execução — clique em "Ver Log" para detalhes.',
         });
-        if (!msg.ok && !msg.cancelado && telaRef.current === 'aula') setLogAberto(true);
+        if (!msg.ok && !msg.cancelado && (telaRef.current === 'aula' || telaRef.current === 'resumo')) setLogAberto(true);
         clearTimeout(jobClearT.current);
         jobClearT.current = setTimeout(() => setJob(null), 12000);
         setTimeout(() => {
-          if (telaRef.current === 'aula') carregarArtefatos().catch(() => {});
+          if (telaRef.current === 'aula' || telaRef.current === 'resumo') carregarArtefatos().catch(() => {});
         }, 400);
       }
       if ((msg.etapa === 'video' || msg.etapa === 'roteiro-short' || msg.etapa === 'short' || msg.etapa === 'questionario') && msg.tipo === 'progress') {
@@ -392,7 +461,10 @@ export function StudioProvider({ children }) {
       adicionarLog(msg);
     };
     sse.addEventListener('progresso', onProgresso);
-    return () => sse.close();
+    return () => {
+      clearTimeout(timerRefreshImagens);
+      sse.close();
+    };
   }, [adicionarLog, carregarArtefatos]);
 
   // ---- Boot + polling ----
@@ -428,11 +500,11 @@ export function StudioProvider({ children }) {
       timers.push(t1, t2, t3);
     }
     boot();
-    // Restaura a página do hash (F5 no workspace volta à mesma aula/etapa).
+    // Restaura a página do hash (F5 no resumo/workspace volta à mesma aula/etapa).
     const rotaInicial = rotaAula();
     if (rotaInicial) {
       abrirAula(rotaInicial.slug)
-        .then(() => setEtapa(rotaInicial.etapa))
+        .then(() => { if (rotaInicial.etapa != null) abrirEtapa(rotaInicial.etapa); })
         .catch(() => mostrarTela('dashboard'));
     } else {
       mostrarTela('dashboard');
@@ -443,19 +515,20 @@ export function StudioProvider({ children }) {
 
   const value = useMemo(() => ({
     tela, slug, roteiro, artefatos, aulas, config, servicos, etapa, jobAtivo, job,
-    logs, logTemErro, logAberto, modal, modalSlideIdx, toastState, progresso,
+    logs, logTemErro, logAberto, modal, modalSlideIdx, toastState, progresso, imgsGerando,
     setEtapa, setRoteiro, setModal, setModalSlideIdx, setLogAberto, setLogTemErro,
-    setProgressoArea, marcarJob,
+    setProgressoArea, marcarJob, marcarImgGerando,
     toast, carregarAulas, carregarRoteiro, carregarArtefatos, mostrarTela, abrirAula,
+    abrirEtapa, verResumo,
     renomearAula, excluirAula, salvarRoteiro, regenerarRoteiro, rodarJob, cancelarJob,
     carregarServicos, verJobServidor, adicionarLog, limparLogs, copiarLogs,
     renumerar: () => setRoteiro((r) => (r ? renumerarSlides({ ...r, slides: [...r.slides] }) : r)),
   }), [
     tela, slug, roteiro, artefatos, aulas, config, servicos, etapa, jobAtivo, job,
-    logs, logTemErro, logAberto, modal, modalSlideIdx, toastState, progresso,
+    logs, logTemErro, logAberto, modal, modalSlideIdx, toastState, progresso, imgsGerando,
     toast, carregarAulas, carregarRoteiro, carregarArtefatos, mostrarTela, abrirAula,
-    renomearAula, excluirAula, salvarRoteiro, regenerarRoteiro, rodarJob, cancelarJob,
-    carregarServicos, verJobServidor, adicionarLog, limparLogs, copiarLogs, setProgressoArea, marcarJob,
+    abrirEtapa, verResumo, renomearAula, excluirAula, salvarRoteiro, regenerarRoteiro, rodarJob, cancelarJob,
+    carregarServicos, verJobServidor, adicionarLog, limparLogs, copiarLogs, setProgressoArea, marcarJob, marcarImgGerando,
   ]);
 
   return <StudioContext.Provider value={value}>{children}</StudioContext.Provider>;

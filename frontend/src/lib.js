@@ -11,6 +11,29 @@ export const ETAPAS = [
   { n: 8, rotulo: 'Questionário' },
 ];
 
+// Ícones e descrições dos passos (usados na tela de resumo do estudo).
+export const ICONES_ETAPA = {
+  1: '📝',
+  2: '🎨',
+  3: '🎙',
+  4: '🎬',
+  5: '✂️',
+  6: '📱',
+  7: '📄',
+  8: '🧠',
+};
+
+export const DESCRICAO_ETAPA = {
+  1: 'Texto da aula, slides e narrações',
+  2: 'Capas + ilustrações dos slides',
+  3: 'Áudios da narração (voz)',
+  4: 'Videoaula principal 16:9',
+  5: 'Texto promocional do Short',
+  6: 'Vídeo vertical 9:16 (≤60s)',
+  7: 'Material de estudo em PDF',
+  8: 'Quiz com 5 perguntas + timer',
+};
+
 export const NOME_ETAPA = {
   roteiro: 'Roteiro',
   imagens: 'Imagens',

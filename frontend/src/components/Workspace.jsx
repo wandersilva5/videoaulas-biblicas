@@ -157,7 +157,7 @@ function BotaoFlutuarSalvar() {
 export default function Workspace() {
   const {
     etapa, roteiro, artefatos, jobAtivo, toast,
-    mostrarTela, renomearAula, excluirAula, carregarRoteiro, carregarArtefatos,
+    mostrarTela, verResumo, renomearAula, excluirAula, carregarRoteiro, carregarArtefatos,
     slug, setEtapa,
   } = useStudio();
 
@@ -189,7 +189,7 @@ export default function Workspace() {
       <Stepper />
       <div className="conteudo">
         <div className="caminho">
-          <button className="btn btn-ghost" id="btn-voltar" onClick={() => mostrarTela('dashboard')}>← Aulas</button>
+          <button className="btn btn-ghost" id="btn-voltar" onClick={() => verResumo()}>← Resumo</button>
           <h2 id="titulo-aula">{roteiro.titulo_aula}</h2>
           <button className="btn btn-ghost btn-mini" title="Renomear título da aula" onClick={() => renomearAula(slug, roteiro.titulo_aula)}>✏️</button>
           <button className="btn btn-ghost btn-mini" title="Recarregar roteiro e artefatos" onClick={atualizar}>↻ Atualizar</button>

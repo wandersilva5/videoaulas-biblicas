@@ -224,6 +224,8 @@ function renderListaServicos() {
 function mostrarTela(nome) {
   estado.tela = nome;
   $('#tela-dashboard').classList.toggle('ativa', nome === 'dashboard');
+  const elResumo = $('#tela-resumo');
+  if (elResumo) elResumo.classList.toggle('ativa', nome === 'resumo');
   $('#tela-aula').classList.toggle('ativa', nome === 'aula');
   if (nome === 'dashboard') carregarAulas();
 }
@@ -233,9 +235,74 @@ async function abrirAula(slug) {
   estado.etapa = 1;
   await Promise.all([carregarRoteiro(), carregarArtefatos()]);
   $('#titulo-aula').textContent = estado.roteiro.titulo_aula;
+  const tResumo = $('#titulo-resumo');
+  if (tResumo) tResumo.textContent = estado.roteiro.titulo_aula;
+  mostrarTela('resumo');
+  renderStepper();
+  renderResumo();
+}
+
+function abrirEtapa(n) {
+  estado.etapa = Math.min(8, Math.max(1, Number(n) || 1));
+  $('#titulo-aula').textContent = estado.roteiro.titulo_aula;
   mostrarTela('aula');
   renderStepper();
-  mudarEtapa(1);
+  mudarEtapa(estado.etapa);
+}
+
+const ICONES_ETAPA = { 1: '📝', 2: '🎨', 3: '🎙', 4: '🎬', 5: '✂️', 6: '📱', 7: '📄', 8: '🧠' };
+const DESCRICAO_ETAPA = {
+  1: 'Texto da aula, slides e narrações',
+  2: 'Capas + ilustrações dos slides',
+  3: 'Áudios da narração (voz)',
+  4: 'Videoaula principal 16:9',
+  5: 'Texto promocional do Short',
+  6: 'Vídeo vertical 9:16 (≤60s)',
+  7: 'Material de estudo em PDF',
+  8: 'Quiz com 5 perguntas + timer',
+};
+
+function detalheEtapaResumo(n) {
+  const st = estado.artefatos;
+  if (!st) return '';
+  if (n === 1) return `${estado.roteiro?.slides?.length ?? 0} slides`;
+  if (n === 2) {
+    if (st.imagensCompletas) return 'Todas prontas';
+    const total = (st.slides?.length ?? 0) + 2;
+    const prontas = [st.intro, ...st.slides, st.conclusao].filter((x) => x?.imagem?.existe).length;
+    return `${prontas}/${total} prontas`;
+  }
+  if (n === 3) return st.audioCompleto ? 'Todos os áudios prontos' : 'Faltam narrações';
+  if (n === 4) return st.video?.existe ? st.video.arquivo : 'Não montado';
+  if (n === 5) return st.roteiro_short?.existe ? 'Roteiro pronto' : 'Não gerado';
+  if (n === 6) return st.short?.existe ? st.short.arquivo : 'Não gerado';
+  if (n === 7) return st.pdf?.existe ? st.pdf.arquivo : 'Não gerado';
+  const qtd = st.questionario?.perguntas?.length ?? 0;
+  if (st.questionario?.existe) return `Vídeo pronto · ${qtd} perguntas`;
+  return qtd ? `${qtd} áudios prontos` : 'Não gerado';
+}
+
+function renderResumo() {
+  const grid = $('#grid-passos');
+  if (!grid || !estado.roteiro || !estado.artefatos) return;
+  $('#titulo-resumo').textContent = estado.roteiro.titulo_aula;
+  const dica = $('#dica-resumo');
+  if (dica) dica.textContent = dicaProximo();
+  grid.innerHTML = ETAPAS.map((e) => {
+    const s = statusEtapa(e.n);
+    const feito = s === 'ok';
+    const parcial = s === 'alerta';
+    const check = feito ? '✓' : parcial ? '!' : '○';
+    const checkCls = feito ? 'ok' : parcial ? 'alerta' : 'pendente';
+    const cardCls = feito ? 'pronto' : parcial ? 'parcial' : 'pendente';
+    return `<button class="card-passo ${cardCls}" data-passo="${e.n}" title="Abrir ${esc(e.rotulo)}">
+      <span class="passo-topo"><span class="passo-icone">${ICONES_ETAPA[e.n]}</span>`
+      + `<span class="passo-check ${checkCls}">${check}</span></span>`
+      + `<span class="passo-num">Passo ${e.n}</span>`
+      + `<span class="passo-titulo">${esc(e.rotulo)}</span>`
+      + `<span class="passo-desc">${esc(DESCRICAO_ETAPA[e.n])}</span>`
+      + `<span class="passo-detalhe">${esc(detalheEtapaResumo(e.n))}</span></button>`;
+  }).join('');
 }
 
 async function carregarRoteiro() {
@@ -245,6 +312,7 @@ async function carregarRoteiro() {
 async function carregarArtefatos() {
   estado.artefatos = await api(`/api/artefatos/${estado.slug}`);
   renderStepper();
+  if (estado.tela === 'resumo') renderResumo();
 }
 
 // ---------------------------------------------------------------------------
@@ -608,16 +676,22 @@ function renderEtapa2(el) {
   const itens = itensImagem();
   const cards = itens
     .map((s, i) => {
+      const gerando = !!__imgsGerando[String(s.arquivo).toLowerCase()];
       const img = s.imagem.existe
         ? `<img src="${urlImagem(s.arquivo, s.imagem.mtime)}" loading="lazy" />`
+        : '';
+      const overlay = gerando
+        ? `<div class="img-gerando overlay"><span class="spinner" />${s.imagem.existe ? 'Regenerando…' : 'Gerando…'}</div>`
         : '';
       const regen = s.imagem.existe
         ? `<button class="regen" data-action="regen-imagem" data-slide="${s.id}" title="Regenerar imagem (novo seed)">↻</button>`
         : '';
-      const badge = s.imagem.existe
-        ? (s.imagem.desatualizado ? '<span class="badge alerta">prompt alterado</span>' : '<span class="badge ok">ok</span>')
-        : '<span class="badge erro">pendente</span>';
-      return `<div class="img-card ${s.imagem.existe ? '' : 'faltando'}" data-idx="${i}">${img}${regen}
+      const badge = gerando
+        ? '<span class="badge alerta">gerando…</span>'
+        : s.imagem.existe
+          ? (s.imagem.desatualizado ? '<span class="badge alerta">prompt alterado</span>' : '<span class="badge ok">ok</span>')
+          : '<span class="badge erro">pendente</span>';
+      return `<div class="img-card ${s.imagem.existe ? '' : 'faltando'}${gerando ? ' gerando' : ''}" data-idx="${i}">${img}${overlay}${regen}
         <div class="img-info"><span>${esc(s.titulo)}</span>${badge}</div></div>`;
     })
     .join('');
@@ -1103,6 +1177,8 @@ $('#etapa-container').addEventListener('click', async (ev) => {
     if (estado.servicos && !servicoOk('qwen')) return toast('Qwen3-TTS indisponível — não é possível gerar narração.', true);
   }
   if (acao === 'regen-imagem') {
+    const item = itensImagem().find((x) => x.id === slideId);
+    if (item) marcarImgGerandoLegado(item.arquivo);
     return rodarJob(api(`/api/imagens/${estado.slug}`, { method: 'POST', body: JSON.stringify({ slideId, variar: true }) }), 'Imagem regenerada.');
   }
   if (acao === 'gerar-todas-imagens') {
@@ -1497,8 +1573,28 @@ $('#input-titulo')?.addEventListener('keydown', (ev) => { if (ev.key === 'Enter'
 
 
 
-$('#btn-voltar').onclick = () => mostrarTela('dashboard');
+$('#btn-voltar').onclick = () => { if (estado.roteiro && estado.artefatos) { mostrarTela('resumo'); renderResumo(); } else mostrarTela('dashboard'); };
 $('#btn-inicio').onclick = () => mostrarTela('dashboard');
+$('#btn-voltar-resumo').onclick = () => mostrarTela('dashboard');
+$('#btn-renomear-resumo').onclick = () => {
+  if (estado.slug && estado.roteiro) renomearAula(estado.slug, estado.roteiro.titulo_aula);
+};
+$('#btn-excluir-resumo').onclick = () => $('#btn-excluir-aula').click();
+$('#btn-atualizar-resumo').onclick = async () => {
+  if (estado.jobAtivo) return toast('Aguarde o job atual terminar.', true);
+  try {
+    await Promise.all([carregarRoteiro(), carregarArtefatos()]);
+    renderResumo();
+    toast('Aula atualizada.');
+  } catch (e) {
+    toast(e.message, true);
+  }
+};
+$('#grid-passos').addEventListener('click', (ev) => {
+  const card = ev.target.closest('[data-passo]');
+  if (!card) return;
+  abrirEtapa(Number(card.dataset.passo));
+});
 $('#btn-renomear-aula').onclick = () => {
   if (estado.slug && estado.roteiro) {
     renomearAula(estado.slug, estado.roteiro.titulo_aula);
@@ -1565,14 +1661,68 @@ $('#btn-fechar-logs').onclick = fecharModalLogs;
 // ---------------------------------------------------------------------------
 // SSE
 // ---------------------------------------------------------------------------
+// Recarrega a grade de imagens a cada PNG pronto (throttle ~800ms), sem
+// esperar o fim do job. Só atua na tela da aula para não brigar com o dashboard.
+let _ultimoRefreshImagens = 0;
+let _timerRefreshImagens = null;
+// PNGs em geração no momento (espelha o imgsGerando do React): acende o
+// overlay no card exato, inclusive ao regenerar imagem já existente.
+const __imgsGerando = {};
+function marcarImgGerandoLegado(arquivo) {
+  if (!arquivo) return;
+  __imgsGerando[String(arquivo).toLowerCase()] = true;
+  if (estado.etapa === 2 && (estado.tela === 'aula')) mudarEtapa(2);
+}
+function desmarcarImgGerandoLegado(arquivo) {
+  const base = String(arquivo || '').split(/[\\/]/).pop().toLowerCase().split('?')[0];
+  if (__imgsGerando[base]) {
+    delete __imgsGerando[base];
+    return true;
+  }
+  return false;
+}
+function recarregarGradeImagens() {
+  if (estado.tela !== 'aula' || !estado.slug) return;
+  const agora = Date.now();
+  const espera = Math.max(0, 800 - (agora - _ultimoRefreshImagens));
+  clearTimeout(_timerRefreshImagens);
+  _timerRefreshImagens = setTimeout(async () => {
+    _ultimoRefreshImagens = Date.now();
+    try {
+      await carregarArtefatos();
+      if (estado.etapa === 2) mudarEtapa(2);
+      if (estado.tela === 'resumo') renderResumo();
+    } catch { /* mantém a grade atual */ }
+  }, espera);
+}
 const sse = new EventSource('/api/progresso');
 sse.addEventListener('progresso', (ev) => {
   const msg = JSON.parse(ev.data);
+  if (msg.etapa === 'imagens' && msg.tipo === 'artefato-inicio') {
+    marcarImgGerandoLegado(msg.linha);
+    if (estado.job?.etapa === 'imagens') {
+      estado.job.status = 'rodando';
+      estado.job.msg = `Gerando ${msg.linha}…`;
+      renderStatusJob();
+    }
+  }
+  if (msg.etapa === 'imagens' && (msg.tipo === 'artefato' || msg.tipo === 'ok')) {
+    if (desmarcarImgGerandoLegado(msg.linha) && estado.etapa === 2 && estado.tela === 'aula') mudarEtapa(2);
+    if (estado.job?.etapa === 'imagens') {
+      estado.job.status = 'rodando';
+      estado.job.msg = msg.tipo === 'artefato' ? `Imagem pronta: ${msg.linha}` : msg.linha;
+      renderStatusJob();
+    }
+    recarregarGradeImagens();
+  }
   if (msg.tipo === 'inicio') {
     estado.jobAtivo = true;
     sincronizarBotoes();
     clearTimeout(_jobClearT);
     estado.job = { jobId: msg.jobId, etapa: msg.etapa, status: 'rodando', msg: 'Preparando…', iniciadoEm: msg.iniciadoEm || Date.now() };
+    if (msg.etapa === 'imagens') {
+      for (const k of Object.keys(__imgsGerando)) delete __imgsGerando[k];
+    }
     renderStatusJob();
   }
   if (msg.tipo === 'progress') {
@@ -1611,6 +1761,10 @@ sse.addEventListener('progresso', (ev) => {
     estado.jobAtivo = false;
     sincronizarBotoes();
     atualizarIndicadorTopo(false);
+    if (msg.etapa === 'imagens') {
+      for (const k of Object.keys(__imgsGerando)) delete __imgsGerando[k];
+      if (estado.etapa === 2 && estado.tela === 'aula') mudarEtapa(2);
+    }
     if (estado.etapa === 4 || estado.etapa === 5 || estado.etapa === 6) {
       const textoOk = estado.etapa === 4 ? 'Vídeo pronto!' : (estado.etapa === 5 ? 'Roteiro Short pronto!' : 'Short pronto!');
       setProgressoVideo(
@@ -1645,6 +1799,8 @@ sse.addEventListener('progresso', (ev) => {
       if (estado.tela === 'aula') {
         carregarArtefatos();
         mudarEtapa(estado.etapa);
+      } else if (estado.tela === 'resumo') {
+        carregarArtefatos();
       }
     }, 400);
   }

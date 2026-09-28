@@ -133,7 +133,7 @@ export async function gerarImagensRoteiro(roteiro, outDir) {
       imagens.push({ id: item.id, path: dest });
       continue;
     }
-    console.error(`  [imagem ${i + 1}/${total}] ${item.rotulo} ...`);
+    console.error(`  [imagem ${i + 1}/${total}] ${item.rotulo} ... ::${item.arquivo}`);
     const inicioImg = Date.now();
     const hb = setInterval(() => {
       console.error(`  [imagem ${i + 1}/${total}] ${item.rotulo} ... aguardando ComfyUI (${Math.round((Date.now() - inicioImg) / 1000)}s)`);

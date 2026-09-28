@@ -2,6 +2,7 @@ import React from 'react';
 import { NOME_ETAPA } from './lib.js';
 import { StudioProvider, useStudio } from './store.jsx';
 import Dashboard from './components/Dashboard.jsx';
+import Resumo from './components/Resumo.jsx';
 import Workspace from './components/Workspace.jsx';
 import { ModalConfig, ModalLogs, ModalServicos, ModalSlide } from './components/Modals.jsx';
 
@@ -60,6 +61,9 @@ function Telas() {
     <main id="app">
       <section id="tela-dashboard" className={`tela${tela === 'dashboard' ? ' ativa' : ''}`}>
         {tela === 'dashboard' && <Dashboard />}
+      </section>
+      <section id="tela-resumo" className={`tela${tela === 'resumo' ? ' ativa' : ''}`}>
+        {tela === 'resumo' && <Resumo />}
       </section>
       <section id="tela-aula" className={`tela${tela === 'aula' ? ' ativa' : ''}`}>
         {tela === 'aula' && <Workspace />}

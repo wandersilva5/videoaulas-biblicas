@@ -151,9 +151,24 @@ function runJob({ etapa, args, env = {} }) {
           if (pm) {
             const pct = Math.round((Number(pm[2]) / Number(pm[3])) * 100);
             emit('progress', `${pm[1]} ${pm[2]}/${pm[3]}${pm[4] ? ' · ' + pm[4].trim() : ''} (${pct}%)`);
+            // Início de uma imagem específica: o gerar_imagens.mjs marca o
+            // arquivo com "::slide-NN.png" para o frontend acender o card exato
+            // (antes só dava para inferir pelo X/N, que erra no regenerar único).
+            if (etapa === 'imagens') {
+              const ini = /::\s*(slide-\d+\.png)\s*$/i.exec(l);
+              if (ini) emit('artefato-inicio', ini[1].toLowerCase());
+            }
           } else if (/erro/i.test(l)) emit('erro', l);
-          else if (/OK:/.test(l)) emit('ok', l);
-          else emit('log', l);
+          else if (/OK:/.test(l)) {
+            emit('ok', l);
+            // Imagem pronta: avisa o frontend para recarregar a grade na hora,
+            // sem esperar o job terminar (antes só atualizava no 'fim').
+            if (etapa === 'imagens') {
+              const base = (l.split('OK:').pop() || '').split(/[\\/]/).pop().trim().split('?')[0];
+              if (/^slide-\d+\.png$/i.test(base)) emit('artefato', base);
+              else emit('artefato', l);
+            }
+          } else emit('log', l);
         }
       }
     });

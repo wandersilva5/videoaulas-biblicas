@@ -172,8 +172,22 @@ export function EtapaRoteiro() {
 // Etapa 2 — Imagens
 // ---------------------------------------------------------------------------
 export function EtapaImagens() {
-  const { artefatos, slug, jobAtivo, servicos, rodarJob, toast, setModalSlideIdx } = useStudio();
+  const { artefatos, slug, jobAtivo, job, imgsGerando, marcarImgGerando, servicos, rodarJob, toast, setModalSlideIdx } = useStudio();
   const itens = itensImagem(artefatos);
+  // Fallback pelo "imagem X/N" (para jobs antigos / sem marcador ::arquivo).
+  const gerandoN = (() => {
+    if (job?.etapa !== 'imagens' || job?.status !== 'rodando') return null;
+    const m = /(\d+)\/(\d+)/.exec(job?.msg || '');
+    return m ? Number(m[1]) : null;
+  })();
+  const estaGerando = (s, i) =>
+    !!imgsGerando[String(s.arquivo).toLowerCase()] || (gerandoN === i + 1 && job?.etapa === 'imagens' && job?.status === 'rodando');
+
+  const regenerarUma = (s) => {
+    if (!checarComfy()) return;
+    marcarImgGerando(s.arquivo);
+    rodarJob(api(`/api/imagens/${slug}`, { method: 'POST', body: JSON.stringify({ slideId: s.id, variar: true }) }), 'Imagem regenerada.');
+  };
 
   const checarComfy = () => {
     if (servicos && !servicoOk(servicos, 'comfy')) {
@@ -210,35 +224,49 @@ export function EtapaImagens() {
         </button>
       </Topo>
       <p className="msg-progresso">Capas de abertura/encerramento + slides. Geração via ComfyUI local (≈30s por imagem). "↻" regenera uma imagem com seed aleatório.</p>
+      {job?.etapa === 'imagens' && job?.status === 'rodando' && (
+        <div className="cartao" style={{ marginBottom: 12 }}>
+          <div className="msg-progresso">{job.msg || 'Gerando imagens…'}</div>
+          {job.pct != null && (
+            <div className="barra-progresso"><div style={{ width: `${Math.max(0, Math.min(100, job.pct))}%` }} /></div>
+          )}
+          <p className="msg-progresso" style={{ marginBottom: 0 }}>As imagens aparecem na grade abaixo assim que ficam prontas — não precisa esperar terminar tudo.</p>
+        </div>
+      )}
       <div className="grid-imagens">
-        {itens.map((s, i) => (
-          <div key={s.id} className={`img-card${s.imagem.existe ? '' : ' faltando'}`}>
+        {itens.map((s, i) => {
+          const gerando = estaGerando(s, i);
+          return (
+          <div key={s.id} className={`img-card${s.imagem.existe ? '' : ' faltando'}${gerando ? ' gerando' : ''}`}>
             {s.imagem.existe && (
-              <img src={urlImagem(slug, s.arquivo, s.imagem.mtime)} loading="lazy" onClick={() => setModalSlideIdx(i)} />
+              <img key={s.imagem.mtime ?? s.id} src={urlImagem(slug, s.arquivo, s.imagem.mtime)} loading="lazy" onClick={() => setModalSlideIdx(i)} />
+            )}
+            {gerando && (
+              <div className="img-gerando overlay"><span className="spinner" />{s.imagem.existe ? 'Regenerando…' : 'Gerando…'}</div>
             )}
             {s.imagem.existe && (
               <button
                 className="regen"
                 title="Regenerar imagem (novo seed)"
                 disabled={jobAtivo}
-                onClick={() => {
-                  if (!checarComfy()) return;
-                  rodarJob(api(`/api/imagens/${slug}`, { method: 'POST', body: JSON.stringify({ slideId: s.id, variar: true }) }), 'Imagem regenerada.');
-                }}
+                onClick={() => regenerarUma(s)}
               >
                 ↻
               </button>
             )}
             <div className="img-info">
               <span>{s.titulo}</span>
-              {s.imagem.existe
-                ? (s.imagem.desatualizado
-                  ? <span className="badge alerta">prompt alterado</span>
-                  : <span className="badge ok">ok</span>)
-                : <span className="badge erro">pendente</span>}
+              {gerando
+                ? <span className="badge alerta">gerando…</span>
+                : s.imagem.existe
+                  ? (s.imagem.desatualizado
+                    ? <span className="badge alerta">prompt alterado</span>
+                    : <span className="badge ok">ok</span>)
+                  : <span className="badge erro">pendente</span>}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </>
   );

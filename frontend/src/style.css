@@ -197,6 +197,35 @@ a.btn { display: inline-block; text-decoration: none; }
 }
 .card-thumb-wrap:hover .btn-excluir,
 .card-thumb-wrap:hover .btn-renomear { opacity: 1; }
+
+/* ---------- Resumo do estudo (cards dos passos) ---------- */
+.grid-passos {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px;
+  margin-top: 16px;
+}
+.card-passo {
+  background: var(--painel); border: 1px solid var(--borda); border-radius: var(--raio);
+  padding: 16px; cursor: pointer; transition: all 0.18s ease;
+  display: flex; flex-direction: column; gap: 6px; text-align: left; color: var(--texto);
+}
+.card-passo:hover { border-color: var(--borda-forte); transform: translateY(-3px); box-shadow: var(--sombra); }
+.card-passo.pronto { border-color: rgba(88, 214, 141, 0.4); }
+.card-passo.parcial { border-color: rgba(245, 176, 65, 0.45); }
+.passo-topo { display: flex; align-items: center; justify-content: space-between; }
+.passo-icone { font-size: 26px; line-height: 1; }
+.passo-check {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 700;
+  border: 1px solid var(--borda);
+}
+.passo-check.ok { background: rgba(88, 214, 141, 0.15); border-color: var(--ok); color: var(--ok); }
+.passo-check.alerta { background: rgba(245, 176, 65, 0.12); border-color: var(--alerta); color: var(--alerta); }
+.passo-check.pendente { color: var(--texto-3); }
+.passo-num { font-size: 12px; color: var(--texto-3); text-transform: uppercase; letter-spacing: 0.5px; }
+.passo-titulo { font-size: 16px; font-weight: 700; }
+.passo-desc { font-size: 13px; color: var(--texto-2); }
+.passo-detalhe { font-size: 12px; color: var(--texto-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btn-excluir:hover { color: var(--erro); border-color: var(--erro); }
 .btn-renomear:hover { color: var(--ouro); border-color: var(--ouro); }
 
@@ -374,6 +403,27 @@ a.btn { display: inline-block; text-decoration: none; }
   display: flex; align-items: center; justify-content: center;
   background: rgba(11, 19, 32, 0.82); color: var(--alerta); font-weight: 600;
 }
+/* Card da imagem em geração: esconde o "pendente" e mostra o spinner. */
+.img-card.gerando::after { display: none; }
+.img-card.gerando { border-color: var(--ouro); }
+.img-card.gerando img { filter: brightness(0.45); }
+.img-card.gerando .regen { opacity: 0; pointer-events: none; }
+.img-gerando {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  aspect-ratio: 16 / 9; color: var(--ouro); font-weight: 600; font-size: 14px;
+  background: rgba(224, 180, 90, 0.06);
+}
+.img-gerando.overlay {
+  position: absolute; inset: 0; bottom: 37px; z-index: 2;
+  aspect-ratio: auto;
+  background: rgba(11, 19, 32, 0.55);
+}
+.img-gerando .spinner {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid rgba(224, 180, 90, 0.3); border-top-color: var(--ouro);
+  animation: girar 0.9s linear infinite;
+}
+@keyframes girar { to { transform: rotate(360deg); } }
 
 /* Narração */
 .item-audio {
