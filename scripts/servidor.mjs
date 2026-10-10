@@ -25,7 +25,7 @@ const DEFAULTS = {
   VOZ: 'pt-BR-AntonioNeural',
   PORTA: '5176',
   LLAMA_EXE: 'E:\\llama.cpp\\llama-server.exe',
-  LLAMA_MODEL: 'E:\\llama.cpp\\models\\Qwen2.5-7B-Instruct.Q5_K_M.gguf',
+  LLAMA_MODEL: 'E:\\llama.cpp\\models\\chat\\Qwen3.5-9B-Q4_K_M.gguf',
   COMFY_DIR: 'D:\\ComfyUI_windows_portable',
 };
 
