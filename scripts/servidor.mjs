@@ -151,21 +151,18 @@ function runJob({ etapa, args, env = {} }) {
           if (pm) {
             const pct = Math.round((Number(pm[2]) / Number(pm[3])) * 100);
             emit('progress', `${pm[1]} ${pm[2]}/${pm[3]}${pm[4] ? ' · ' + pm[4].trim() : ''} (${pct}%)`);
-            // Início de uma imagem específica: o gerar_imagens.mjs marca o
-            // arquivo com "::slide-NN.png" para o frontend acender o card exato
-            // (antes só dava para inferir pelo X/N, que erra no regenerar único).
-            if (etapa === 'imagens') {
-              const ini = /::\s*(slide-\d+\.png)\s*$/i.exec(l);
+            // Início de uma imagem específica: marca o arquivo para o frontend acender o card exato
+            if (etapa === 'imagens' || etapa === 'imagens_testemunho') {
+              const ini = /::\s*((?:slide|cena)-\d+\.png)\s*$/i.exec(l);
               if (ini) emit('artefato-inicio', ini[1].toLowerCase());
             }
           } else if (/erro/i.test(l)) emit('erro', l);
           else if (/OK:/.test(l)) {
             emit('ok', l);
-            // Imagem pronta: avisa o frontend para recarregar a grade na hora,
-            // sem esperar o job terminar (antes só atualizava no 'fim').
-            if (etapa === 'imagens') {
+            // Imagem pronta: avisa o frontend para recarregar o card na hora
+            if (etapa === 'imagens' || etapa === 'imagens_testemunho') {
               const base = (l.split('OK:').pop() || '').split(/[\\/]/).pop().trim().split('?')[0];
-              if (/^slide-\d+\.png$/i.test(base)) emit('artefato', base);
+              if (/^(?:slide|cena)-\d+\.png$/i.test(base)) emit('artefato', base.toLowerCase());
               else emit('artefato', l);
             }
           } else emit('log', l);
@@ -497,7 +494,9 @@ async function limparProjetosHtmlVideo(slug) {
 
 async function listarAulas() {
   if (!existsSync(OUTPUT_DIR)) return [];
-  const dirs = (await readdir(OUTPUT_DIR, { withFileTypes: true })).filter((d) => d.isDirectory());
+  const dirs = (await readdir(OUTPUT_DIR, { withFileTypes: true })).filter(
+    (d) => d.isDirectory() && d.name !== 'testemunhos',
+  );
   const aulas = [];
   for (const d of dirs) {
     const rp = join(OUTPUT_DIR, d.name, 'roteiro.json');
@@ -526,6 +525,91 @@ async function listarAulas() {
   aulas.sort((a, b) => (a.slug < b.slug ? 1 : -1));
   return aulas;
 }
+
+const TESTEMUNHOS_DIR = join(OUTPUT_DIR, 'testemunhos');
+
+async function listarTestemunhos() {
+  if (!existsSync(TESTEMUNHOS_DIR)) return [];
+  const dirs = (await readdir(TESTEMUNHOS_DIR, { withFileTypes: true })).filter((d) => d.isDirectory());
+  const itens = [];
+  for (const d of dirs) {
+    const slug = d.name;
+    const rp = join(TESTEMUNHOS_DIR, slug, 'roteiro.json');
+    if (!existsSync(rp)) continue;
+    try {
+      const roteiro = JSON.parse(await readFile(rp, 'utf8'));
+      const st = await artefatosTestemunho(slug);
+      itens.push({
+        slug,
+        titulo: roteiro.titulo || 'Testemunho sem título',
+        formato: roteiro.formato || '16:9',
+        hook_3s: roteiro.hook_3s || '',
+        cenasTotal: roteiro.cenas?.length || 0,
+        cenasImagensProntas: st.cenas.filter((c) => c.imagem.existe).length,
+        cenasAudiosProntos: st.cenas.filter((c) => c.audio.existe).length,
+        videoPronto: st.video.existe,
+        videoArquivo: st.video.arquivo,
+        thumbnail: st.cenas[0]?.imagem.existe ? st.cenas[0].imagem.url : null,
+      });
+    } catch (e) {
+      console.error(`[listarTestemunhos] Erro ao ler ${slug}/roteiro.json:`, e.message);
+    }
+  }
+  itens.sort((a, b) => (a.slug < b.slug ? 1 : -1));
+  return itens;
+}
+
+async function artefatosTestemunho(slug) {
+  const dir = join(TESTEMUNHOS_DIR, slug);
+  const roteiroPath = join(dir, 'roteiro.json');
+  if (!existsSync(roteiroPath)) throw new Error('Testemunho não encontrado');
+  const roteiro = JSON.parse(await readFile(roteiroPath, 'utf8'));
+  const cenas = (roteiro.cenas || []).map((c) => {
+    const imgPath = join(dir, `${c.id}.png`);
+    const audioPath = join(dir, `${c.id}-narracao.mp3`);
+    return {
+      id: c.id,
+      titulo_cena: c.titulo_cena || c.id,
+      narracao: c.narracao || '',
+      imagem_prompt: c.imagem_prompt || '',
+      imagem: {
+        existe: existsSync(imgPath),
+        url: existsSync(imgPath) ? `/media/testemunhos/${slug}/${c.id}.png?v=${mtimeDe(imgPath)}` : null,
+        mtime: mtimeDe(imgPath),
+      },
+      audio: {
+        existe: existsSync(audioPath),
+        url: existsSync(audioPath) ? `/media/testemunhos/${slug}/${c.id}-narracao.mp3?v=${mtimeDe(audioPath)}` : null,
+        mtime: mtimeDe(audioPath),
+      },
+    };
+  });
+
+  const arquivos = existsSync(dir) ? await readdir(dir) : [];
+  const mp4s = arquivos.filter((f) => f.endsWith('.mp4') && !f.startsWith('.'));
+  let videoInfo = { existe: false, arquivo: null, url: null, tamanho: 0 };
+  if (mp4s.length > 0) {
+    const nomeVideo = mp4s[mp4s.length - 1];
+    const vp = join(dir, nomeVideo);
+    videoInfo = {
+      existe: true,
+      arquivo: nomeVideo,
+      url: `/media/testemunhos/${slug}/${nomeVideo}?v=${mtimeDe(vp)}`,
+      tamanho: statSync(vp).size,
+      mtime: mtimeDe(vp),
+    };
+  }
+
+  return {
+    slug,
+    roteiro,
+    cenas,
+    video: videoInfo,
+    imagensCompletas: cenas.length > 0 && cenas.every((c) => c.imagem.existe),
+    audiosCompletos: cenas.length > 0 && cenas.every((c) => c.audio.existe),
+  };
+}
+
 
 // ---------------------------------------------------------------------------
 // Health check dos serviços externos (GET /api/health)
@@ -705,6 +789,16 @@ const server = createServer(async (req, res) => {
       return arquivo(res, alvo);
     }
 
+    // ---- Arquivos de mídia de testemunhos (output/testemunhos/<slug>/...) ----
+    if (path.startsWith('/media/testemunhos/')) {
+      const [, , , slug, ...resto] = path.split('/');
+      if (!ehSlugValido(slug) || resto.length !== 1) return json(res, 400, { erro: 'Caminho inválido' });
+      const nomeArquivo = basename(resto[0]);
+      const alvo = join(OUTPUT_DIR, 'testemunhos', slug, nomeArquivo);
+      if (!dentroDe(join(OUTPUT_DIR, 'testemunhos'), alvo)) return json(res, 400, { erro: 'Caminho inválido' });
+      return arquivo(res, alvo);
+    }
+
     // ---- Arquivos de mídia (output/<slug>/...) ----
     if (path.startsWith('/media/')) {
       const [, , slug, ...resto] = path.split('/');
@@ -739,6 +833,116 @@ const server = createServer(async (req, res) => {
     const recurso = m[1];
     const slug = m[2] ?? '';
     const acao = m[3] ?? '';
+
+    // =========================================================================
+    // API TESTEMUNHOS
+    // =========================================================================
+    if (recurso === 'testemunhos') {
+      if (!slug && req.method === 'GET') {
+        return json(res, 200, await listarTestemunhos());
+      }
+
+      if (slug === 'roteiro' && req.method === 'POST') {
+        const body = await lerBody(req);
+        const titulo = String(body.titulo || body.topico || '').trim();
+        const texto = String(body.texto || body.material || '').trim();
+        const formato = body.formato === '9:16' ? '9:16' : '16:9';
+        if (!texto) return json(res, 400, { erro: 'Texto do testemunho é obrigatório.' });
+
+        const novoSlug = slugDe(titulo || 'testemunho-' + Date.now());
+        const args = [
+          join(SCRIPTS_DIR, 'gerar_roteiro_testemunho.mjs'),
+          '--titulo', titulo || 'Testemunho de Fé',
+          '--texto', texto,
+          '--formato', formato,
+        ];
+
+        try {
+          const resultado = await runJob({ etapa: 'roteiro_testemunho', args });
+          return json(res, 200, { ok: true, slug: novoSlug, ...resultado });
+        } catch (e) {
+          return json(res, statusDeErroJob(e), { erro: e.message });
+        }
+      }
+
+      if (slug && !acao && req.method === 'GET') {
+        if (!ehSlugValido(slug)) return json(res, 400, { erro: 'Slug inválido' });
+        try {
+          return json(res, 200, await artefatosTestemunho(slug));
+        } catch (e) {
+          return json(res, 404, { erro: e.message });
+        }
+      }
+
+      if (slug && acao === 'roteiro' && req.method === 'PUT') {
+        if (!ehSlugValido(slug)) return json(res, 400, { erro: 'Slug inválido' });
+        const roteiroPath = join(TESTEMUNHOS_DIR, slug, 'roteiro.json');
+        if (!existsSync(roteiroPath)) return json(res, 404, { erro: 'Testemunho não encontrado' });
+        const body = await lerBody(req);
+        await writeFile(roteiroPath, JSON.stringify(body, null, 2), 'utf8');
+        return json(res, 200, { ok: true });
+      }
+
+      if (slug && acao === 'imagens' && req.method === 'POST') {
+        if (!ehSlugValido(slug)) return json(res, 400, { erro: 'Slug inválido' });
+        const roteiroPath = join(TESTEMUNHOS_DIR, slug, 'roteiro.json');
+        if (!existsSync(roteiroPath)) return json(res, 404, { erro: 'Testemunho não encontrado' });
+        const body = await lerBody(req);
+        const args = [join(SCRIPTS_DIR, 'gerar_imagens_testemunho.mjs'), roteiroPath];
+        if (body.cenaId) args.push('--apenas', body.cenaId);
+        if (body.recriarTodos) args.push('--recriarTodos');
+
+        try {
+          const resultado = await runJob({ etapa: 'imagens_testemunho', args });
+          return json(res, 200, { ok: true, resultado });
+        } catch (e) {
+          return json(res, statusDeErroJob(e), { erro: e.message });
+        }
+      }
+
+      if (slug && acao === 'narracao' && req.method === 'POST') {
+        if (!ehSlugValido(slug)) return json(res, 400, { erro: 'Slug inválido' });
+        const roteiroPath = join(TESTEMUNHOS_DIR, slug, 'roteiro.json');
+        if (!existsSync(roteiroPath)) return json(res, 404, { erro: 'Testemunho não encontrado' });
+        const body = await lerBody(req);
+        const args = [join(SCRIPTS_DIR, 'gerar_narracao_testemunho.mjs'), roteiroPath];
+        if (body.cenaId) args.push('--apenas', body.cenaId);
+        if (body.todos) args.push('--todos');
+
+        try {
+          const resultado = await runJob({ etapa: 'narracao_testemunho', args });
+          return json(res, 200, { ok: true, resultado });
+        } catch (e) {
+          return json(res, statusDeErroJob(e), { erro: e.message });
+        }
+      }
+
+      if (slug && acao === 'video' && req.method === 'POST') {
+        if (!ehSlugValido(slug)) return json(res, 400, { erro: 'Slug inválido' });
+        const roteiroPath = join(TESTEMUNHOS_DIR, slug, 'roteiro.json');
+        if (!existsSync(roteiroPath)) return json(res, 404, { erro: 'Testemunho não encontrado' });
+        const args = [join(SCRIPTS_DIR, 'montar_video_testemunho.mjs'), roteiroPath];
+
+        try {
+          const resultado = await runJob({ etapa: 'video_testemunho', args });
+          return json(res, 200, { ok: true, resultado });
+        } catch (e) {
+          return json(res, statusDeErroJob(e), { erro: e.message });
+        }
+      }
+
+      if (slug && !acao && req.method === 'DELETE') {
+        if (!ehSlugValido(slug)) return json(res, 400, { erro: 'Slug inválido' });
+        const dir = join(TESTEMUNHOS_DIR, slug);
+        if (!existsSync(dir)) return json(res, 404, { erro: 'Testemunho não encontrado' });
+        try {
+          await rm(dir, { recursive: true, force: true });
+          return json(res, 200, { ok: true, slug });
+        } catch (e) {
+          return json(res, 500, { erro: e.message });
+        }
+      }
+    }
 
     if (recurso === 'aulas' && !acao && req.method === 'GET') {
       return json(res, 200, await listarAulas());

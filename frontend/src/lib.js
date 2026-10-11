@@ -43,6 +43,10 @@ export const NOME_ETAPA = {
   short: 'Short',
   pdf: 'PDF',
   questionario: 'Questionário',
+  roteiro_testemunho: 'Roteiro de Testemunho',
+  imagens_testemunho: 'Imagens do Testemunho',
+  narracao_testemunho: 'Narração do Testemunho',
+  video_testemunho: 'Vídeo do Testemunho',
 };
 
 export const ORDEM_SERVICOS = ['llama', 'comfy', 'qwen', 'ffmpeg', 'ffprobe', 'chromium'];

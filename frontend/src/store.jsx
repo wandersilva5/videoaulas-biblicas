@@ -10,7 +10,10 @@ const LOGS_EXECUCOES_RETIDAS = 3;
 // certa (sem isso, o efeito de sincronização apagaria o hash no mount,
 // antes do boot tentar restaurá-lo).
 // #/aula/<slug> = resumo do estudo; #/aula/<slug>/<etapa> = passo da aula.
+// #/testemunhos = listagem de testemunhos; #/testemunhos/<slug> = projeto aberto.
 function lerHashInicial() {
+  const mt = /^#\/testemunhos(?:\/([a-z0-9-]+))?$/.exec(window.location.hash || '');
+  if (mt) return { tela: 'testemunhos', slugTestemunho: mt[1] || null, slug: null, etapa: 1 };
   const m = /^#\/aula\/([a-z0-9-]+)(?:\/(\d+))?$/.exec(window.location.hash || '');
   if (!m) return { tela: 'dashboard', slug: null, etapa: 1 };
   if (!m[2]) return { tela: 'resumo', slug: m[1], etapa: 1 };
@@ -32,6 +35,8 @@ export function StudioProvider({ children }) {
   if (!hashInicial.current) hashInicial.current = lerHashInicial();
   const [tela, setTela] = useState(hashInicial.current.tela);
   const [slug, setSlug] = useState(hashInicial.current.slug);
+  // Slug do testemunho aberto (para o hash #/testemunhos/<slug> sobreviver ao F5).
+  const [slugTestemunho, setSlugTestemunho] = useState(hashInicial.current.slugTestemunho || null);
   const [roteiro, setRoteiro] = useState(null);
   const [artefatos, setArtefatos] = useState(null);
   const [aulas, setAulas] = useState([]);
@@ -147,17 +152,20 @@ export function StudioProvider({ children }) {
 
   // ---- Roteamento por hash: a URL reflete a tela atual
   // (#/ ou #/aula/<slug> = resumo ou #/aula/<slug>/<etapa>) para que F5 e
-  // voltar/avançar permaneçam na página em vez de cair na home. ----
+  // voltar/avançar permaneçam na página em vez de cair na home.
+  // #/testemunhos ou #/testemunhos/<slug> para o módulo de testemunhos. ----
   useEffect(() => {
     let desejado = '#/';
-    if (slug) {
+    if (tela === 'testemunhos') {
+      desejado = slugTestemunho ? `#/testemunhos/${slugTestemunho}` : '#/testemunhos';
+    } else if (slug) {
       desejado = tela === 'aula' ? `#/aula/${slug}/${etapa}` : `#/aula/${slug}`;
       if (tela === 'dashboard') desejado = '#/';
     }
     if (window.location.hash !== desejado) {
       window.history.replaceState(null, '', desejado);
     }
-  }, [tela, slug, etapa]);
+  }, [tela, slug, slugTestemunho, etapa]);
 
   const rotaAula = useCallback(() => {
     const m = /^#\/aula\/([a-z0-9-]+)(?:\/(\d+))?$/.exec(window.location.hash || '');
@@ -165,8 +173,21 @@ export function StudioProvider({ children }) {
     return { slug: m[1], etapa: m[2] ? Math.min(8, Math.max(1, Number(m[2]) || 1)) : null };
   }, []);
 
+  const rotaTestemunho = useCallback(() => {
+    const mt = /^#\/testemunhos(?:\/([a-z0-9-]+))?$/.exec(window.location.hash || '');
+    if (!mt) return null;
+    return { slugTestemunho: mt[1] || null };
+  }, []);
+
   useEffect(() => {
     const aoMudarHash = () => {
+      const rotaT = rotaTestemunho();
+      if (rotaT) {
+        setTela('testemunhos');
+        // O TestemunhosStudio vai reagir à mudança de slugTestemunho e abrir o projeto.
+        setSlugTestemunho(rotaT.slugTestemunho);
+        return;
+      }
       const rota = rotaAula();
       if (rota) {
         if (rota.slug !== slugRef.current) {
@@ -185,7 +206,7 @@ export function StudioProvider({ children }) {
     };
     window.addEventListener('hashchange', aoMudarHash);
     return () => window.removeEventListener('hashchange', aoMudarHash);
-  }, [abrirAula, abrirEtapa, mostrarTela, rotaAula]);
+  }, [abrirAula, abrirEtapa, mostrarTela, rotaAula, rotaTestemunho]);
 
   // ---- Aulas: renomear / excluir (com atualização de estado, sem depender só de refetch) ----
   const renomearAula = useCallback(async (sg, tituloAtual) => {
@@ -406,16 +427,16 @@ export function StudioProvider({ children }) {
       // Cada imagem pronta chega como 'artefato' (novo) ou 'ok' (compat):
       // mostra no banner e recarrega só a grade, sem esperar o job acabar.
       // 'artefato-inicio' acende o spinner no card exato; 'artefato' apaga.
-      if (msg.etapa === 'imagens' && msg.tipo === 'artefato-inicio') {
+      if ((msg.etapa === 'imagens' || msg.etapa === 'imagens_testemunho') && msg.tipo === 'artefato-inicio') {
         const arq = String(msg.linha || '').toLowerCase();
         setImgsGerando((ant) => ({ ...ant, [arq]: true }));
         setJob((ant) => (ant?.etapa === msg.etapa ? { ...ant, status: 'rodando', msg: `Gerando ${arq}…` } : ant));
       }
-      if (msg.etapa === 'imagens' && (msg.tipo === 'artefato' || msg.tipo === 'ok')) {
+      if ((msg.etapa === 'imagens' || msg.etapa === 'imagens_testemunho') && (msg.tipo === 'artefato' || msg.tipo === 'ok')) {
         const rotulo = msg.tipo === 'artefato' ? `Imagem pronta: ${msg.linha}` : msg.linha;
         setJob((ant) => (ant?.etapa === msg.etapa ? { ...ant, status: 'rodando', msg: rotulo } : ant));
         const base = String(msg.linha || '').split(/[\\/]/).pop().toLowerCase().split('?')[0];
-        if (/^slide-\d+\.png$/.test(base)) {
+        if (/^(?:slide|cena)-\d+\.png$/.test(base)) {
           setImgsGerando((ant) => {
             if (!ant[base]) return ant;
             const prox = { ...ant };
@@ -427,7 +448,7 @@ export function StudioProvider({ children }) {
       }
       if (msg.tipo === 'fim') {
         setJobAtivo(false);
-        if (msg.etapa === 'imagens') setImgsGerando({});
+        if (msg.etapa === 'imagens' || msg.etapa === 'imagens_testemunho') setImgsGerando({});
         if (etapaRef.current === 4 || etapaRef.current === 5 || etapaRef.current === 6) {
           const area = etapaRef.current === 4 ? 'video' : 'short';
           const textoOk = etapaRef.current === 4 ? 'Vídeo pronto!' : (etapaRef.current === 5 ? 'Roteiro Short pronto!' : 'Short pronto!');
@@ -500,35 +521,45 @@ export function StudioProvider({ children }) {
       timers.push(t1, t2, t3);
     }
     boot();
-    // Restaura a página do hash (F5 no resumo/workspace volta à mesma aula/etapa).
-    const rotaInicial = rotaAula();
-    if (rotaInicial) {
-      abrirAula(rotaInicial.slug)
-        .then(() => { if (rotaInicial.etapa != null) abrirEtapa(rotaInicial.etapa); })
-        .catch(() => mostrarTela('dashboard'));
+    // Restaura a página do hash (F5 no resumo/workspace volta à mesma aula/etapa;
+    // F5 em #/testemunhos/<slug> volta ao projeto de testemunho aberto).
+    const rotaT = rotaTestemunho();
+    if (rotaT) {
+      // Tela de testemunhos: o slugTestemunho já foi inicializado pelo lerHashInicial;
+      // o TestemunhosStudio reagirá via prop/context ao montar.
+      setTela('testemunhos');
     } else {
-      mostrarTela('dashboard');
+      const rotaInicial = rotaAula();
+      if (rotaInicial) {
+        abrirAula(rotaInicial.slug)
+          .then(() => { if (rotaInicial.etapa != null) abrirEtapa(rotaInicial.etapa); })
+          .catch(() => mostrarTela('dashboard'));
+      } else {
+        mostrarTela('dashboard');
+      }
     }
     return () => timers.forEach(clearInterval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const value = useMemo(() => ({
-    tela, slug, roteiro, artefatos, aulas, config, servicos, etapa, jobAtivo, job,
+    tela, slug, slugTestemunho, roteiro, artefatos, aulas, config, servicos, etapa, jobAtivo, job,
     logs, logTemErro, logAberto, modal, modalSlideIdx, toastState, progresso, imgsGerando,
     setEtapa, setRoteiro, setModal, setModalSlideIdx, setLogAberto, setLogTemErro,
     setProgressoArea, marcarJob, marcarImgGerando,
+    setSlugTestemunho,
     toast, carregarAulas, carregarRoteiro, carregarArtefatos, mostrarTela, abrirAula,
     abrirEtapa, verResumo,
     renomearAula, excluirAula, salvarRoteiro, regenerarRoteiro, rodarJob, cancelarJob,
     carregarServicos, verJobServidor, adicionarLog, limparLogs, copiarLogs,
     renumerar: () => setRoteiro((r) => (r ? renumerarSlides({ ...r, slides: [...r.slides] }) : r)),
   }), [
-    tela, slug, roteiro, artefatos, aulas, config, servicos, etapa, jobAtivo, job,
+    tela, slug, slugTestemunho, roteiro, artefatos, aulas, config, servicos, etapa, jobAtivo, job,
     logs, logTemErro, logAberto, modal, modalSlideIdx, toastState, progresso, imgsGerando,
     toast, carregarAulas, carregarRoteiro, carregarArtefatos, mostrarTela, abrirAula,
     abrirEtapa, verResumo, renomearAula, excluirAula, salvarRoteiro, regenerarRoteiro, rodarJob, cancelarJob,
     carregarServicos, verJobServidor, adicionarLog, limparLogs, copiarLogs, setProgressoArea, marcarJob, marcarImgGerando,
+    setSlugTestemunho,
   ]);
 
   return <StudioContext.Provider value={value}>{children}</StudioContext.Provider>;
