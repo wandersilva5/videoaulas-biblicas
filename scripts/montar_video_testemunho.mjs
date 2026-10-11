@@ -16,7 +16,7 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { esc, musicaFundo, prepararMusicaEmLoop } from './util.mjs';
-import { gerarLegendas } from './gerar_legendas.mjs';
+import { calcularLinhasLegenda, gerarAssLegendas } from './gerar_legendas.mjs';
 
 // Desativa legendas queimadas com LEGENDA_TESTEMUNHO=0
 const LEGENDA_ATIVA = process.env.LEGENDA_TESTEMUNHO !== '0';
@@ -43,48 +43,28 @@ async function medirDuracaoMp3(path) {
 
 /**
  * Fallback: queima legendas diretamente via drawtext quando libass não está
- * disponível. Divide cada narração em chunks de 6 palavras e usa enable=
- * para exibir cada chunk no intervalo correto.
+ * disponível. Usa as linhas já alinhadas com as pausas reais do áudio.
  */
-async function queimardrawtextFallback(itens, videoIn, videoOut, width, height, fps) {
-  const PALAVRAS = 6;
+async function queimardrawtextFallback(linhasPorCena, videoIn, videoOut, width, height) {
   const marginV = Math.round(height * 0.06); // 6% da altura
   const fontSize = width >= 1920 ? 52 : 44;
 
-  const filtros = [];
-  let t = 0;
+  const eventos = linhasPorCena.flatMap((c) => c.linhas || []);
+  const filtros = eventos.map((l) => {
+    // Escapa caracteres especiais para drawtext
+    const textoEsc = (l.texto || '')
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, "\\'")
+      .replace(/:/g, '\\:')
+      .replace(/%/g, '\\%');
 
-  for (const it of itens) {
-    const narracao = (it.narracao || '').trim();
-    const palavras = narracao.split(/\s+/).filter(Boolean);
-    const total = palavras.length;
-    let idx = 0;
-
-    while (idx < total) {
-      const chunk = palavras.slice(idx, idx + PALAVRAS).join(' ');
-      const proporcao = Math.min(PALAVRAS, total - idx) / total;
-      const durChunk = it.dur * proporcao;
-      const inicio = t + (idx === 0 ? 0.05 : 0);
-      const fim = t + it.dur * (Math.min(idx + PALAVRAS, total) / total);
-
-      // Escapa caracteres especiais para drawtext
-      const textoEsc = chunk
-        .replace(/\\/g, '\\\\')
-        .replace(/'/g, "\\'")
-        .replace(/:/g, '\\:')
-        .replace(/%/g, '\\%');
-
-      filtros.push(
-        `drawtext=text='${textoEsc}':fontsize=${fontSize}:fontcolor=white:` +
-        `borderw=3:bordercolor=black:shadowx=2:shadowy=2:` +
-        `x=(w-text_w)/2:y=h-${marginV + fontSize}:` +
-        `enable='between(t,${inicio.toFixed(3)},${fim.toFixed(3)})'`
-      );
-      idx += PALAVRAS;
-    }
-
-    t += it.dur;
-  }
+    return (
+      `drawtext=text='${textoEsc}':fontsize=${fontSize}:fontcolor=white:` +
+      `borderw=3:bordercolor=black:shadowx=2:shadowy=2:` +
+      `x=(w-text_w)/2:y=h-${marginV + fontSize}:` +
+      `enable='between(t,${l.inicio.toFixed(3)},${l.fim.toFixed(3)})'`
+    );
+  });
 
   const filtroStr = filtros.join(',');
 
@@ -144,14 +124,19 @@ export async function renderizarVideoTestemunho(roteiro, outDir) {
 
   // Gera o arquivo de legendas ASS antes de renderizar os clipes
   let assPath = null;
+  let linhasLegenda = null;
   if (LEGENDA_ATIVA) {
     try {
       console.error('[montar_video] Gerando legendas sincronizadas (.ass)...');
-      assPath = await gerarLegendas(roteiro, itens, outDir, { width, height });
+      // As linhas são ancoradas nas pausas reais de cada áudio, então a legenda
+      // acompanha o ritmo da narração em vez de uma estimativa linear.
+      linhasLegenda = await calcularLinhasLegenda(itens);
+      assPath = await gerarAssLegendas(linhasLegenda, outDir, roteiro.slug, { width, height });
       console.error(`[montar_video] Legendas geradas: ${assPath}`);
     } catch (e) {
       console.error(`[montar_video][aviso] Falha ao gerar legendas: ${e.message}. Continuando sem legendas.`);
       assPath = null;
+      linhasLegenda = null;
     }
   }
 
@@ -262,8 +247,8 @@ export async function renderizarVideoTestemunho(roteiro, outDir) {
       });
     }).then(async (res) => {
       if (res === 'fallback') {
-        // Fallback: drawtext direto com chunks de texto por tempo
-        await queimardrawtextFallback(itens, videoSemMusica, videoParaMusica, width, height, FPS);
+        // Fallback: drawtext direto com as linhas já alinhadas
+        await queimardrawtextFallback(linhasLegenda || [], videoSemMusica, videoParaMusica, width, height);
       }
     });
   }

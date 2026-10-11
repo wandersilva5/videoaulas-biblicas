@@ -9,6 +9,66 @@ function estimarDuracaoMinutos(texto) {
   return `~${minutos} min (${palavras} palavras)`;
 }
 
+const DESCRICAO_PROJETO = `Testemunhos de Fé é um projeto dedicado a dar voz a histórias reais de fé, superação e recomeço. Aqui, cada relato é tratado com respeito, fidelidade e sobriedade — sem exageros e sem espetáculo, apenas a verdade do que Deus fez na vida de pessoas comuns.
+
+Todos os vídeos são produzidos de forma independente: roteiro fiel ao relato original, imagens ilustrativas, narração contínua e trilha reflexiva. Nosso compromisso é levar esperança a quem precisa ouvir que não está sozinho.
+
+Inscreva-se no canal, ative o sininho e acompanhe um novo testemunho por semana. Se você também tem uma história para contar, envie seu relato — ele pode encorajar alguém que está passando pelo mesmo caminho.
+
+#TestemunhoDeFé #Fé #Esperança #Superação #HistóriasReais #FéEmDeus`;
+
+function BlocoDescricaoYouTube({ onCopiar }) {
+  return (
+    <div style={{ borderTop: '1px solid var(--borda)', marginTop: '20px', paddingTop: '16px', textAlign: 'left' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', marginBottom: '14px' }}>
+        <div>
+          <h4 style={{ fontSize: '15px', color: 'var(--ouro)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span>▶️</span> Sobre o Projeto — Descrição para o YouTube
+          </h4>
+          <p style={{ fontSize: '12px', color: 'var(--texto-3)' }}>
+            Texto institucional do canal, pronto para colar na descrição do canal ou dos vídeos publicados.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={onCopiar}
+          style={{
+            border: '1px solid var(--borda)',
+            borderRadius: '8px',
+            padding: '8px 16px',
+            fontSize: '13px',
+            whiteSpace: 'nowrap',
+            flexShrink: 0,
+          }}
+        >
+          📋 Copiar descrição
+        </button>
+      </div>
+
+      <div>
+        {DESCRICAO_PROJETO.split('\n\n').map((paragrafo, i) => {
+          const hashtags = paragrafo.startsWith('#');
+          return (
+            <p
+              key={i}
+              style={{
+                fontSize: hashtags ? '13px' : '14px',
+                color: hashtags ? 'var(--ouro)' : 'var(--texto-2)',
+                lineHeight: '1.6',
+                margin: 0,
+                marginBottom: hashtags ? 0 : '12px',
+              }}
+            >
+              {paragrafo}
+            </p>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function TestemunhosStudio() {
   const { toast, servicos, job, imgsGerando, cancelarJob, slugTestemunho, setSlugTestemunho } = useStudio();
   const [testemunhos, setTestemunhos] = useState([]);
@@ -255,6 +315,15 @@ export default function TestemunhosStudio() {
       carregarTestemunhos();
     } catch (err) {
       toast(err.message, true);
+    }
+  };
+
+  const copiarDescricaoProjeto = async () => {
+    try {
+      await navigator.clipboard.writeText(DESCRICAO_PROJETO);
+      toast('Descrição do projeto copiada para a área de transferência!');
+    } catch (e) {
+      toast('Não foi possível copiar automaticamente. Selecione o texto e copie manualmente.', true);
     }
   };
 
@@ -997,6 +1066,8 @@ export default function TestemunhosStudio() {
                         ↻ Remontar Vídeo
                       </button>
                     </div>
+
+                    <BlocoDescricaoYouTube onCopiar={copiarDescricaoProjeto} />
                   </div>
                 ) : (
                   <div style={{ padding: '24px', color: 'var(--texto-3)' }}>
