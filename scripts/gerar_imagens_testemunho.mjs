@@ -2,20 +2,26 @@
  * gerar_imagens_testemunho.mjs — Gera as imagens minimalistas das cenas do testemunho
  * utilizando o workflow ComfyUI do projeto.
  *
+ * Cada cena é ilustrada por VÁRIAS imagens (os prompts de `cena.imagens`),
+ * salvas como `cena-XX-img-NN.png` — elas se revezam no vídeo durante a
+ * narração da cena. Projetos antigos (uma imagem por cena) continuam
+ * funcionando: `imagensDaCenaTestemunho` cai no nome legado `cena-XX.png`.
+ *
  * Suporta:
  *   - Formato 16:9 (1152x640) ou 9:16 (640x1152) conforme definido no roteiro.
- *   - Regeneração de uma única cena (--apenas cena-01).
+ *   - Regeneração de uma cena inteira (--apenas cena-01) ou de uma imagem só
+ *     (--apenas cena-01-img-02).
  *   - Pula imagens existentes a menos que --recriarTodos seja passado.
  *
  * Uso:
- *   node gerar_imagens_testemunho.mjs output/testemunhos/<slug>/roteiro.json [--apenas <cenaId>] [--recriarTodos]
+ *   node gerar_imagens_testemunho.mjs output/testemunhos/<slug>/roteiro.json [--apenas <cenaId|cenaId-img-NN>] [--recriarTodos]
  */
 
-import { readFile, copyFile, mkdir } from 'node:fs/promises';
+import { copyFile, mkdir } from 'node:fs/promises';
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { limparTextoDePromptImagem } from './util.mjs';
+import { limparTextoDePromptImagem, imagensDaCenaTestemunho } from './util.mjs';
 
 const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SCRIPTS_DIR, '..');
@@ -115,36 +121,58 @@ export async function gerarImagensTestemunho(roteiro, outDir, { apenas = null, r
   await mkdir(outDir, { recursive: true });
   const vertical = roteiro.formato === '9:16';
   const cenas = roteiro.cenas || [];
-  const total = cenas.length;
+
+  // Uma entrada por imagem: a cena é ilustrada por vários quadros que se
+  // revezam no vídeo, então o total da etapa conta imagens, não cenas.
+  const fila = [];
+  for (const cena of cenas) {
+    for (const img of imagensDaCenaTestemunho(cena, outDir)) {
+      fila.push({
+        cenaId: cena.id,
+        titulo: cena.titulo_cena || cena.id,
+        idx: img.idx,
+        arquivo: img.arquivo,
+        destino: img.caminho,
+        existe: img.existe,
+        prompt: img.prompt,
+      });
+    }
+  }
+  // --apenas aceita a cena inteira (cena-01) ou uma imagem só (cena-01-img-02).
+  const alvo = apenas ? String(apenas).toLowerCase() : null;
+  const selecionados = alvo
+    ? fila.filter((f) => f.cenaId === alvo || f.arquivo.replace(/\.png$/i, '') === alvo)
+    : fila;
+  if (alvo && selecionados.length === 0) {
+    throw new Error(`Nenhuma imagem encontrada para "${apenas}". Use o id da cena (ex.: cena-01) ou o arquivo (ex.: cena-01-img-02).`);
+  }
+
+  const total = selecionados.length;
   const resultados = [];
 
   for (let i = 0; i < total; i++) {
-    const cena = cenas[i];
-    if (apenas && cena.id !== apenas) continue;
+    const item = selecionados[i];
 
-    const arquivoNome = `${cena.id}.png`;
-    const dest = join(outDir, arquivoNome);
-
-    if (existsSync(dest) && !recriarTodos && !apenas) {
-      console.error(`  [imagem ${i + 1}/${total}] ${cena.titulo_cena || cena.id} (já existe, pulando)`);
-      resultados.push({ id: cena.id, path: dest });
+    if (item.existe && !recriarTodos && !alvo) {
+      console.error(`  [imagem ${i + 1}/${total}] ${item.titulo} · imagem ${item.idx} (já existe, pulando)`);
+      resultados.push({ id: item.cenaId, imagem: item.arquivo, path: item.destino });
       continue;
     }
 
-    console.error(`  [imagem ${i + 1}/${total}] ${cena.titulo_cena || cena.id} ... ::${arquivoNome}`);
+    console.error(`  [imagem ${i + 1}/${total}] ${item.titulo} · imagem ${item.idx} ... ::${item.arquivo}`);
     const inicioImg = Date.now();
     const hb = setInterval(() => {
-      console.error(`  [imagem ${i + 1}/${total}] ${cena.titulo_cena || cena.id} ... aguardando ComfyUI (${Math.round((Date.now() - inicioImg) / 1000)}s)`);
+      console.error(`  [imagem ${i + 1}/${total}] ${item.titulo} · imagem ${item.idx} ... aguardando ComfyUI (${Math.round((Date.now() - inicioImg) / 1000)}s)`);
     }, 15000);
 
     try {
-      const seed = SEED_BASE + (i * 179) + Math.floor(Math.random() * 50);
-      const tempPath = await gerarImagemCena(cena.imagem_prompt, { seed, vertical });
+      const seed = SEED_BASE + (i * 179) + (item.idx * 37) + Math.floor(Math.random() * 50);
+      const tempPath = await gerarImagemCena(item.prompt, { seed, vertical });
       clearInterval(hb);
-      await copyFile(tempPath, dest);
-      console.error(`  [imagem ${i + 1}/${total}] ${cena.titulo_cena || cena.id} concluída!`);
-      console.error(`  OK: ${dest}`);
-      resultados.push({ id: cena.id, path: dest });
+      await copyFile(tempPath, item.destino);
+      console.error(`  [imagem ${i + 1}/${total}] ${item.titulo} · imagem ${item.idx} concluída!`);
+      console.error(`  OK: ${item.destino}`);
+      resultados.push({ id: item.cenaId, imagem: item.arquivo, path: item.destino });
     } catch (e) {
       clearInterval(hb);
       throw e;
@@ -157,7 +185,7 @@ export async function gerarImagensTestemunho(roteiro, outDir, { apenas = null, r
 async function main() {
   const args = process.argv.slice(2);
   if (!args.length) {
-    console.error('Uso: node gerar_imagens_testemunho.mjs output/testemunhos/<slug>/roteiro.json [--apenas <cenaId>] [--recriarTodos]');
+    console.error('Uso: node gerar_imagens_testemunho.mjs output/testemunhos/<slug>/roteiro.json [--apenas <cenaId|cenaId-img-NN>] [--recriarTodos]');
     process.exit(1);
   }
 
@@ -167,7 +195,7 @@ async function main() {
   const apenas = apenasIdx !== -1 && args[apenasIdx + 1] ? args[apenasIdx + 1] : null;
   const recriarTodos = args.includes('--recriarTodos');
 
-  const roteiro = JSON.parse(await readFile(roteiroPath, 'utf8'));
+  const roteiro = JSON.parse(await readFileSync(roteiroPath, 'utf8'));
   const resultados = await gerarImagensTestemunho(roteiro, outDir, { apenas, recriarTodos });
   console.log(JSON.stringify(resultados, null, 2));
 }

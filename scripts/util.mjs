@@ -154,6 +154,40 @@ export function itensDoRoteiro(roteiro) {
   ];
 }
 
+/**
+ * Testemunhos: prompts de imagem de uma cena. Aceita o formato novo
+ * (`cena.imagens: [...]`, vários prompts por cena) e o legado
+ * (`cena.imagem_prompt` avulso — projetos antigos, 1 imagem por cena).
+ */
+export function promptsImagemCena(cena) {
+  const lista = Array.isArray(cena?.imagens) ? cena.imagens : [];
+  const limpos = lista.map((p) => String(p ?? '').trim()).filter(Boolean);
+  if (limpos.length) return limpos;
+  const unico = String(cena?.imagem_prompt ?? '').trim();
+  return unico ? [unico] : [];
+}
+
+/**
+ * Arquivos de imagem de uma cena de testemunho, na ordem dos prompts do
+ * roteiro: `cena-XX-img-NN.png`. A primeira imagem pode estar salva com o
+ * nome legado `cena-XX.png` (projetos antigos seguem funcionando sem
+ * regenerar nada) — nesse caso `atual` aponta para o arquivo em disco e
+ * `caminho` continua sendo o nome canônico usado ao (re)gerar.
+ */
+export function imagensDaCenaTestemunho(cena, dir) {
+  return promptsImagemCena(cena).map((prompt, i) => {
+    const arquivo = `${cena.id}-img-${String(i + 1).padStart(2, '0')}.png`;
+    const caminho = join(dir, arquivo);
+    const legado = i === 0 ? join(dir, `${cena.id}.png`) : null;
+    const atual = existsSync(caminho)
+      ? caminho
+      : legado && existsSync(legado)
+        ? legado
+        : caminho;
+    return { idx: i + 1, arquivo, arquivoAtual: basename(atual), caminho, atual, existe: existsSync(atual), prompt };
+  });
+}
+
 /** Slug da pasta de saída: minúsculo, sem acentos, não-alfanuméricos viram hífen. */
 export function slugDe(t) {
   return String(t ?? '')

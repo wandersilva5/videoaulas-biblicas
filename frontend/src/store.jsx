@@ -436,7 +436,7 @@ export function StudioProvider({ children }) {
         const rotulo = msg.tipo === 'artefato' ? `Imagem pronta: ${msg.linha}` : msg.linha;
         setJob((ant) => (ant?.etapa === msg.etapa ? { ...ant, status: 'rodando', msg: rotulo } : ant));
         const base = String(msg.linha || '').split(/[\\/]/).pop().toLowerCase().split('?')[0];
-        if (/^(?:slide|cena)-\d+\.png$/.test(base)) {
+        if (/^(?:slide|cena)-\w+(?:-img-\d+)?\.png$/.test(base)) {
           setImgsGerando((ant) => {
             if (!ant[base]) return ant;
             const prox = { ...ant };

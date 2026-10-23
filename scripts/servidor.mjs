@@ -4,7 +4,7 @@ import { existsSync, createReadStream, statSync, readFileSync } from 'node:fs';
 import { join, dirname, basename, extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { slugDe, hashDe, esc, MIME, itensDoRoteiro, limparProjetosAntigosHtmlVideo, qwenEnv, truncarMaterial, MATERIAL_MAX_CHARS, imagemPromptIntro, imagemPromptConclusao } from './util.mjs';
+import { slugDe, hashDe, esc, MIME, itensDoRoteiro, limparProjetosAntigosHtmlVideo, qwenEnv, truncarMaterial, MATERIAL_MAX_CHARS, imagemPromptIntro, imagemPromptConclusao, imagensDaCenaTestemunho, promptsImagemCena } from './util.mjs';
 import { extrairTextoPDF } from './pdf_texto.mjs';
 
 const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
@@ -153,7 +153,7 @@ function runJob({ etapa, args, env = {} }) {
             emit('progress', `${pm[1]} ${pm[2]}/${pm[3]}${pm[4] ? ' · ' + pm[4].trim() : ''} (${pct}%)`);
             // Início de uma imagem específica: marca o arquivo para o frontend acender o card exato
             if (etapa === 'imagens' || etapa === 'imagens_testemunho') {
-              const ini = /::\s*((?:slide|cena)-\d+\.png)\s*$/i.exec(l);
+              const ini = /::\s*((?:slide|cena)-\w+(?:-img-\d+)?\.png)\s*$/i.exec(l);
               if (ini) emit('artefato-inicio', ini[1].toLowerCase());
             }
           } else if (/erro/i.test(l)) emit('erro', l);
@@ -162,7 +162,7 @@ function runJob({ etapa, args, env = {} }) {
             // Imagem pronta: avisa o frontend para recarregar o card na hora
             if (etapa === 'imagens' || etapa === 'imagens_testemunho') {
               const base = (l.split('OK:').pop() || '').split(/[\\/]/).pop().trim().split('?')[0];
-              if (/^(?:slide|cena)-\d+\.png$/i.test(base)) emit('artefato', base.toLowerCase());
+              if (/^(?:slide|cena)-\w+(?:-img-\d+)?\.png$/i.test(base)) emit('artefato', base.toLowerCase());
               else emit('artefato', l);
             }
           } else emit('log', l);
@@ -545,6 +545,8 @@ async function listarTestemunhos() {
         formato: roteiro.formato || '16:9',
         hook_3s: roteiro.hook_3s || '',
         cenasTotal: roteiro.cenas?.length || 0,
+        imagensTotal: st.imagensTotal,
+        imagensProntas: st.imagensProntas,
         cenasImagensProntas: st.cenas.filter((c) => c.imagem.existe).length,
         cenasAudiosProntos: st.cenas.filter((c) => c.audio.existe).length,
         videoPronto: st.video.existe,
@@ -565,17 +567,28 @@ async function artefatosTestemunho(slug) {
   if (!existsSync(roteiroPath)) throw new Error('Testemunho não encontrado');
   const roteiro = JSON.parse(await readFile(roteiroPath, 'utf8'));
   const cenas = (roteiro.cenas || []).map((c) => {
-    const imgPath = join(dir, `${c.id}.png`);
     const audioPath = join(dir, `${c.id}-narracao.mp3`);
+    // Cada cena é ilustrada por várias imagens (cena-XX-img-NN.png); a
+    // primeira cai no nome legado cena-XX.png em projetos antigos.
+    const imagens = imagensDaCenaTestemunho(c, dir).map((im) => ({
+      idx: im.idx,
+      arquivo: im.arquivo,
+      arquivoAtual: im.arquivoAtual,
+      prompt: im.prompt,
+      existe: im.existe,
+      url: im.existe ? `/media/testemunhos/${slug}/${im.arquivoAtual}?v=${mtimeDe(im.atual)}` : null,
+    }));
+    const primeira = imagens[0] || { existe: false, url: null };
     return {
       id: c.id,
       titulo_cena: c.titulo_cena || c.id,
       narracao: c.narracao || '',
+      imagens,
       imagem_prompt: c.imagem_prompt || '',
       imagem: {
-        existe: existsSync(imgPath),
-        url: existsSync(imgPath) ? `/media/testemunhos/${slug}/${c.id}.png?v=${mtimeDe(imgPath)}` : null,
-        mtime: mtimeDe(imgPath),
+        existe: primeira.existe,
+        url: primeira.url,
+        mtime: primeira.existe ? mtimeDe(join(dir, primeira.arquivoAtual)) : 0,
       },
       audio: {
         existe: existsSync(audioPath),
@@ -605,7 +618,9 @@ async function artefatosTestemunho(slug) {
     roteiro,
     cenas,
     video: videoInfo,
-    imagensCompletas: cenas.length > 0 && cenas.every((c) => c.imagem.existe),
+    imagensTotal: cenas.reduce((s, c) => s + c.imagens.length, 0),
+    imagensProntas: cenas.reduce((s, c) => s + c.imagens.filter((i) => i.existe).length, 0),
+    imagensCompletas: cenas.length > 0 && cenas.every((c) => c.imagens.length > 0 && c.imagens.every((i) => i.existe)),
     audiosCompletos: cenas.length > 0 && cenas.every((c) => c.audio.existe),
   };
 }
@@ -889,6 +904,7 @@ const server = createServer(async (req, res) => {
         if (!existsSync(roteiroPath)) return json(res, 404, { erro: 'Testemunho não encontrado' });
         const body = await lerBody(req);
         const args = [join(SCRIPTS_DIR, 'gerar_imagens_testemunho.mjs'), roteiroPath];
+        // `cenaId` aceita a cena inteira (cena-01) ou uma imagem só (cena-01-img-02).
         if (body.cenaId) args.push('--apenas', body.cenaId);
         if (body.recriarTodos) args.push('--recriarTodos');
 
@@ -897,6 +913,42 @@ const server = createServer(async (req, res) => {
           return json(res, 200, { ok: true, resultado });
         } catch (e) {
           return json(res, statusDeErroJob(e), { erro: e.message });
+        }
+      }
+
+      // DELETE — remove uma imagem da cena (arquivo + prompt do roteiro).
+      if (slug && acao === 'imagens' && req.method === 'DELETE') {
+        if (!ehSlugValido(slug)) return json(res, 400, { erro: 'Slug inválido' });
+        const dir = join(TESTEMUNHOS_DIR, slug);
+        const roteiroPath = join(dir, 'roteiro.json');
+        if (!existsSync(roteiroPath)) return json(res, 404, { erro: 'Testemunho não encontrado' });
+        const body = await lerBody(req);
+        const alvo = String(body.arquivo || body.cenaId || '').toLowerCase().trim();
+        if (!/^cena-\d+(?:-img-\d+)?\.png$/.test(alvo)) {
+          return json(res, 400, { erro: 'Informe o arquivo da imagem (ex.: cena-01-img-02.png).' });
+        }
+        const png = join(dir, alvo);
+        if (!dentroDe(dir, png) || !png.endsWith('.png')) {
+          return json(res, 400, { erro: 'Caminho inválido' });
+        }
+        try {
+          const roteiro = JSON.parse(await readFile(roteiroPath, 'utf8'));
+          const idx = Number(/-img-(\d+)$/.exec(alvo)?.[1] || 0) - 1;
+          const cena = (roteiro.cenas || []).find((c) => alvo.startsWith(`${c.id}-`));
+          if (!cena) return json(res, 404, { erro: 'Cena não encontrada no roteiro.' });
+          const prompts = promptsImagemCena(cena);
+          prompts.splice(idx, 1);
+          cena.imagens = prompts;
+          cena.imagem_prompt = prompts[0] || '';
+          await writeFile(roteiroPath, JSON.stringify(roteiro, null, 2), 'utf8');
+          if (existsSync(png)) await rm(png, { force: true });
+          // Uma cena precisa de pelo menos uma imagem.
+          if (!prompts.length) {
+            return json(res, 200, { ok: true, aviso: 'A cena ficou sem imagens — gere ou adicione uma nova.' });
+          }
+          return json(res, 200, { ok: true });
+        } catch (e) {
+          return json(res, 500, { erro: e.message });
         }
       }
 

@@ -84,10 +84,10 @@ export default function TestemunhosStudio() {
   const [criandoRoteiro, setCriandoRoteiro] = useState(false);
   const fileInputRef = useRef(null);
 
-  // Modal Lightbox da Imagem
-  const [lightboxImg, setLightboxImg] = useState(null);
+  // Modal Lightbox da Imagem (índice na lista achatada de todas as imagens)
+  const [lightboxIdx, setLightboxIdx] = useState(null);
 
-  // Edição inline de cenas
+  // Edição inline de cenas: { [cenaId]: { narracao, imagens: [prompt, ...] } }
   const [edicoes, setEdicoes] = useState({});
   const [promptsAbertos, setPromptsAbertos] = useState({});
   const [salvandoCenas, setSalvandoCenas] = useState(false);
@@ -120,10 +120,15 @@ export default function TestemunhosStudio() {
     try {
       const dados = await api(`/api/testemunhos/${slug}`);
       setDadosTestemunho(dados);
-      // Prepara estado de edições
+      // Prepara estado de edições (narração + lista de prompts de imagem da cena)
       const map = {};
       dados.cenas.forEach((c) => {
-        map[c.id] = { narracao: c.narracao, imagem_prompt: c.imagem_prompt };
+        const prompts = c.imagens?.length
+          ? c.imagens.map((i) => i.prompt)
+          : c.imagem_prompt
+            ? [c.imagem_prompt]
+            : [];
+        map[c.id] = { narracao: c.narracao, imagens: prompts };
       });
       setEdicoes(map);
     } catch (e) {
@@ -205,11 +210,16 @@ export default function TestemunhosStudio() {
     try {
       const roteiroAtualizado = {
         ...dadosTestemunho.roteiro,
-        cenas: dadosTestemunho.roteiro.cenas.map((c) => ({
-          ...c,
-          narracao: edicoes[c.id]?.narracao ?? c.narracao,
-          imagem_prompt: edicoes[c.id]?.imagem_prompt ?? c.imagem_prompt,
-        })),
+        cenas: dadosTestemunho.roteiro.cenas.map((c) => {
+          const imagens = (edicoes[c.id]?.imagens ?? []).map((p) => String(p || '').trim()).filter(Boolean);
+          return {
+            ...c,
+            narracao: edicoes[c.id]?.narracao ?? c.narracao,
+            imagens,
+            // Compat: o primeiro prompt continua espelhado em imagem_prompt.
+            imagem_prompt: imagens[0] || '',
+          };
+        }),
       };
       await api(`/api/testemunhos/${dadosTestemunho.slug}/roteiro`, {
         method: 'PUT',
@@ -241,14 +251,59 @@ export default function TestemunhosStudio() {
     }
   };
 
-  const gerarImagemCena = async (cenaId) => {
-    if (!dadosTestemunho || jobRodando) return;
+  // Prompts editados de uma cena (fallback para o que veio do servidor).
+  const promptsDaCena = (c) =>
+    edicoes[c.id]?.imagens ??
+    (c.imagens?.length ? c.imagens.map((i) => i.prompt) : c.imagem_prompt ? [c.imagem_prompt] : []);
+
+  const setPromptImagem = (cenaId, idx, valor) => {
+    setEdicoes((prev) => {
+      const atuais = [...(prev[cenaId]?.imagens ?? [])];
+      while (atuais.length <= idx) atuais.push('');
+      atuais[idx] = valor;
+      return { ...prev, [cenaId]: { ...prev[cenaId], imagens: atuais } };
+    });
+  };
+
+  const adicionarImagem = (cenaId) => {
+    setEdicoes((prev) => {
+      const atuais = [...(prev[cenaId]?.imagens ?? [])];
+      return { ...prev, [cenaId]: { ...prev[cenaId], imagens: [...atuais, ''] } };
+    });
+    toast('Imagem adicionada à cena. Escreva o prompt (em inglês), salve os textos e clique em Gerar.');
+  };
+
+  const removerImagem = async (cenaId, arquivo) => {
+    if (!dadosTestemunho) return;
     try {
       await api(`/api/testemunhos/${dadosTestemunho.slug}/imagens`, {
-        method: 'POST',
-        body: JSON.stringify({ cenaId }),
+        method: 'DELETE',
+        body: JSON.stringify({ arquivo }),
       });
-      toast(`Regenerando imagem da ${cenaId}...`);
+      toast(`Imagem ${arquivo} removida.`);
+      await abrirTestemunho(dadosTestemunho.slug);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+
+  // Regenera uma imagem avulsa (cena-01-img-02). Salva o roteiro antes para
+  // garantir que um prompt recém-editado vá para o ComfyUI.
+  const gerarImagemCena = async (cenaId, arquivo) => {
+    if (!dadosTestemunho || jobRodando) return;
+    const idx = Number(/-img-(\d+)$/.exec(arquivo)?.[1] || 1) - 1;
+    const promptAtual = String(promptsDaCena({ id: cenaId })[idx] || '').trim();
+    if (!promptAtual) {
+      toast('Escreva o prompt (em inglês) desta imagem antes de gerar.', true);
+      return;
+    }
+    try {
+      await salvarAlteracoesCenas();
+      await api(`/api/testemunhos/${dadosTestemunho.slug}/imagens`, {
+        method: 'POST',
+        body: JSON.stringify({ cenaId: arquivo }),
+      });
+      toast(`Regenerando ${arquivo}...`);
     } catch (e) {
       toast(e.message, true);
     }
@@ -328,21 +383,47 @@ export default function TestemunhosStudio() {
   };
 
   // Helper para verificar se uma cena específica está em processamento
-  const isCenaGerandoImagem = (cenaId) => {
-    if (imgsGerando?.[`${cenaId}.png`]) return true;
-    if (gerandoImagens && (job?.msg?.includes(cenaId) || job?.msg?.toLowerCase().includes(cenaId.replace('-', ' ')))) return true;
+  const isImagemGerando = (arquivo) => {
+    const chave = String(arquivo).toLowerCase();
+    if (imgsGerando?.[chave]) return true;
+    if (gerandoImagens && String(job?.msg || '').toLowerCase().includes(chave)) return true;
     return false;
   };
+
+  const isCenaGerandoImagem = (cenaId) =>
+    (dadosTestemunho?.cenas?.find((c) => c.id === cenaId)?.imagens || []).some((i) => isImagemGerando(i.arquivo));
 
   const isCenaGerandoAudio = (cenaId) => {
     if (gerandoVozes && (job?.msg?.includes(cenaId) || job?.msg?.toLowerCase().includes(cenaId.replace('-', ' ')))) return true;
     return false;
   };
 
+  // Lista achatada de todas as imagens prontas (lightbox com setas ←/→).
+  const galeria = React.useMemo(
+    () =>
+      (dadosTestemunho?.cenas || []).flatMap((c) =>
+        (c.imagens || [])
+          .filter((i) => i.existe)
+          .map((i) => ({ url: i.url, titulo: `${c.titulo_cena || c.id} · imagem ${i.idx}` })),
+      ),
+    [dadosTestemunho],
+  );
+
+  useEffect(() => {
+    if (lightboxIdx == null) return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setLightboxIdx(null);
+      else if (e.key === 'ArrowRight') setLightboxIdx((i) => (galeria.length ? (i + 1) % galeria.length : null));
+      else if (e.key === 'ArrowLeft') setLightboxIdx((i) => (galeria.length ? (i - 1 + galeria.length) % galeria.length : null));
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightboxIdx, galeria.length]);
+
   return (
     <div className="testemunhos-container" style={{ padding: '24px 0', maxWidth: '1280px', margin: '0 auto' }}>
-      {/* Lightbox Modal */}
-      {lightboxImg && (
+      {/* Lightbox Modal (com navegação ←/→ e Esc) */}
+      {lightboxIdx != null && galeria[lightboxIdx] && (
         <div
           className="modal-backdrop"
           style={{
@@ -355,23 +436,43 @@ export default function TestemunhosStudio() {
             justifyContent: 'center',
             padding: '24px',
           }}
-          onClick={() => setLightboxImg(null)}
+          onClick={() => setLightboxIdx(null)}
         >
           <div style={{ position: 'relative', maxWidth: '90vw', maxHeight: '90vh' }} onClick={(e) => e.stopPropagation()}>
             <img
-              src={lightboxImg.url}
-              alt={lightboxImg.titulo}
+              src={galeria[lightboxIdx].url}
+              alt={galeria[lightboxIdx].titulo}
               style={{
                 width: '100%',
-                maxHeight: '85vh',
+                maxHeight: '78vh',
                 objectFit: 'contain',
                 borderRadius: '8px',
                 boxShadow: '0 8px 32px rgba(0,0,0,0.8)',
               }}
             />
-            <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'space-between', color: '#eef3f9' }}>
-              <span>{lightboxImg.titulo}</span>
-              <button className="btn btn-ghost" onClick={() => setLightboxImg(null)}>✕ Fechar</button>
+            <div style={{ marginTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#eef3f9', gap: '16px' }}>
+              <button
+                className="btn btn-ghost"
+                onClick={() => setLightboxIdx((i) => (i - 1 + galeria.length) % galeria.length)}
+                style={{ border: '1px solid var(--borda)', borderRadius: '6px', padding: '6px 14px' }}
+                title="Imagem anterior (←)"
+              >
+                ←
+              </button>
+              <span style={{ fontSize: '13px' }}>
+                {galeria[lightboxIdx].titulo} — {lightboxIdx + 1} / {galeria.length}
+              </span>
+              <button
+                className="btn btn-ghost"
+                onClick={() => setLightboxIdx((i) => (i + 1) % galeria.length)}
+                style={{ border: '1px solid var(--borda)', borderRadius: '6px', padding: '6px 14px' }}
+                title="Próxima imagem (→)"
+              >
+                →
+              </button>
+            </div>
+            <div style={{ marginTop: '8px', textAlign: 'center' }}>
+              <button className="btn btn-ghost" onClick={() => setLightboxIdx(null)}>✕ Fechar (Esc)</button>
             </div>
           </div>
         </div>
@@ -542,7 +643,7 @@ export default function TestemunhosStudio() {
                     </div>
                     <div style={{ borderTop: '1px solid var(--borda)', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: '12px', color: 'var(--texto-3)' }}>
-                        {t.cenasTotal} cenas ({t.cenasImagensProntas}🖼️ | {t.cenasAudiosProntos}🔊)
+                        {t.cenasTotal} cenas · {t.imagensProntas ?? t.cenasImagensProntas}/{t.imagensTotal ?? t.cenasTotal} 🖼️ · {t.cenasAudiosProntos} 🔊
                       </span>
                       <button
                         className="btn btn-ghost"
@@ -747,9 +848,7 @@ export default function TestemunhosStudio() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '36px' }}>
                 {dadosTestemunho.cenas?.map((c, idx) => {
                   const vertical = dadosTestemunho.roteiro?.formato === '9:16';
-                  const thumbW = vertical ? '110px' : '180px';
-                  const thumbH = vertical ? '195px' : '101px';
-                  const promptAberto = !!promptsAbertos[c.id];
+                  const thumbW = vertical ? '58px' : '96px';
                   const cenaGerandoImg = isCenaGerandoImagem(c.id);
                   const cenaGerandoAud = isCenaGerandoAudio(c.id);
 
@@ -763,7 +862,7 @@ export default function TestemunhosStudio() {
                         borderRadius: 'var(--raio)',
                         padding: '18px 20px',
                         display: 'grid',
-                        gridTemplateColumns: `minmax(340px, 1fr) ${thumbW} 260px`,
+                        gridTemplateColumns: `minmax(300px, 1fr) 340px 250px`,
                         gap: '20px',
                         alignItems: 'start',
                         boxShadow: cenaGerandoImg || cenaGerandoAud ? '0 0 16px rgba(224, 180, 90, 0.2)' : 'none',
@@ -803,122 +902,157 @@ export default function TestemunhosStudio() {
                             }));
                           }}
                         />
-
-                        {/* Campo Retrátil de Prompt de Imagem */}
-                        <div style={{ marginTop: '8px' }}>
-                          <button
-                            type="button"
-                            className="btn btn-ghost"
-                            style={{ fontSize: '11px', color: 'var(--texto-3)', padding: '2px 6px' }}
-                            onClick={() => setPromptsAbertos((prev) => ({ ...prev, [c.id]: !prev[c.id] }))}
-                          >
-                            {promptAberto ? '▲ Ocultar Prompt em Inglês' : '▼ Ver/Editar Prompt em Inglês'}
-                          </button>
-                          {promptAberto && (
-                            <textarea
-                              rows={2}
-                              disabled={jobRodando}
-                              style={{
-                                width: '100%',
-                                marginTop: '6px',
-                                padding: '8px',
-                                background: 'rgba(0,0,0,0.3)',
-                                border: '1px dashed var(--borda)',
-                                borderRadius: '6px',
-                                color: 'var(--texto-2)',
-                                fontSize: '12px',
-                              }}
-                              value={edicoes[c.id]?.imagem_prompt ?? c.imagem_prompt}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setEdicoes((prev) => ({
-                                  ...prev,
-                                  [c.id]: { ...prev[c.id], imagem_prompt: val },
-                                }));
-                              }}
-                            />
-                          )}
-                        </div>
                       </div>
 
-                      {/* Coluna 2: Imagem do Slide da Narração (Thumbnail com Status) */}
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-                        <div
-                          style={{
-                            width: thumbW,
-                            height: thumbH,
-                            borderRadius: '8px',
-                            overflow: 'hidden',
-                            background: '#070d17',
-                            border: cenaGerandoImg ? '1px solid var(--ouro)' : '1px solid var(--borda)',
-                            cursor: c.imagem.existe && !cenaGerandoImg ? 'pointer' : 'default',
-                            position: 'relative',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}
-                          onClick={() => {
-                            if (c.imagem.existe && !cenaGerandoImg) {
-                              setLightboxImg({ url: c.imagem.url, titulo: `${c.titulo_cena || c.id}` });
-                            }
-                          }}
-                          title={cenaGerandoImg ? 'Gerando imagem...' : c.imagem.existe ? 'Clique para ver maior' : 'Imagem não gerada'}
-                        >
-                          {c.imagem.existe && (
-                            <img
-                              src={c.imagem.url}
-                              alt={c.id}
-                              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                            />
-                          )}
+                      {/* Coluna 2: Galeria de Imagens da Cena (várias ilustrações) */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '13px', color: 'var(--texto-2)', fontWeight: '500' }}>
+                            🖼️ Imagens da Cena
+                          </span>
+                          <span style={{ fontSize: '11px', color: 'var(--texto-3)' }}>
+                            {(c.imagens || []).filter((i) => i.existe).length}/{promptsDaCena(c).length} prontas
+                          </span>
+                        </div>
 
-                          {/* Overlay de Processamento da Imagem */}
-                          {cenaGerandoImg && (
-                            <div
-                              style={{
-                                position: 'absolute',
-                                inset: 0,
-                                background: 'rgba(11, 19, 32, 0.88)',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: '6px',
-                                padding: '8px',
-                                textAlign: 'center',
-                              }}
-                            >
-                              <span style={{ fontSize: '18px', animation: 'spin 1.5s linear infinite', display: 'inline-block' }}>🎨</span>
-                              <span style={{ fontSize: '11px', color: 'var(--ouro)', fontWeight: 'bold' }}>Gerando imagem…</span>
-                            </div>
-                          )}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          {promptsDaCena(c).map((prompt, j) => {
+                            const info = c.imagens?.[j];
+                            const arquivo = info?.arquivo || `${c.id}-img-${String(j + 1).padStart(2, '0')}.png`;
+                            const gerando = isImagemGerando(arquivo);
+                            const chavePrompt = `${c.id}:${arquivo}`;
+                            const promptAberto = !!promptsAbertos[chavePrompt] || !String(prompt || '').trim();
 
-                          {!c.imagem.existe && !cenaGerandoImg && (
-                            <span style={{ fontSize: '12px', color: 'var(--texto-3)', textAlign: 'center', padding: '6px' }}>
-                              Sem imagem
-                            </span>
-                          )}
+                            return (
+                              <div
+                                key={arquivo}
+                                style={{
+                                  display: 'flex',
+                                  gap: '10px',
+                                  padding: '8px',
+                                  background: 'rgba(0,0,0,0.18)',
+                                  border: gerando ? '1px solid var(--ouro)' : '1px solid var(--borda)',
+                                  borderRadius: '8px',
+                                }}
+                              >
+                                {/* Thumbnail */}
+                                <div
+                                  style={{
+                                    width: thumbW,
+                                    flexShrink: 0,
+                                    aspectRatio: vertical ? '9 / 16' : '16 / 9',
+                                    borderRadius: '6px',
+                                    overflow: 'hidden',
+                                    background: '#070d17',
+                                    border: '1px solid var(--borda)',
+                                    cursor: info?.existe && !gerando ? 'pointer' : 'default',
+                                    position: 'relative',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                  }}
+                                  onClick={() => {
+                                    if (info?.existe && !gerando) {
+                                      const pos = galeria.findIndex((g) => g.url === info.url);
+                                      setLightboxIdx(pos >= 0 ? pos : null);
+                                    }
+                                  }}
+                                  title={gerando ? 'Gerando imagem...' : info?.existe ? 'Clique para ver maior' : 'Imagem não gerada'}
+                                >
+                                  {info?.existe && (
+                                    <img src={info.url} alt={arquivo} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                  )}
 
-                          {c.imagem.existe && !cenaGerandoImg && (
-                            <div
-                              style={{
-                                position: 'absolute',
-                                inset: 0,
-                                background: 'rgba(0,0,0,0.35)',
-                                opacity: 0,
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                color: '#fff',
-                                fontSize: '18px',
-                                transition: 'opacity 0.2s',
-                              }}
-                              onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
-                              onMouseLeave={(e) => (e.currentTarget.style.opacity = '0')}
-                            >
-                              🔍
-                            </div>
-                          )}
+                                  {gerando && (
+                                    <div
+                                      style={{
+                                        position: 'absolute',
+                                        inset: 0,
+                                        background: 'rgba(11, 19, 32, 0.88)',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: '4px',
+                                        textAlign: 'center',
+                                      }}
+                                    >
+                                      <span style={{ fontSize: '16px', animation: 'spin 1.5s linear infinite', display: 'inline-block' }}>🎨</span>
+                                      <span style={{ fontSize: '10px', color: 'var(--ouro)', fontWeight: 'bold' }}>Gerando…</span>
+                                    </div>
+                                  )}
+
+                                  {!info?.existe && !gerando && (
+                                    <span style={{ fontSize: '11px', color: 'var(--texto-3)', textAlign: 'center', padding: '4px' }}>
+                                      Sem imagem
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Prompt + ações da imagem */}
+                                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' }}>
+                                    <span style={{ fontSize: '11px', color: 'var(--texto-3)' }}>
+                                      Imagem {j + 1}
+                                      {info?.existe ? '' : ' · pendente'}
+                                    </span>
+                                    <div style={{ display: 'flex', gap: '4px' }}>
+                                      <button
+                                        type="button"
+                                        className="btn btn-ghost"
+                                        disabled={jobRodando}
+                                        title={info?.existe ? 'Regerar esta imagem' : 'Gerar esta imagem'}
+                                        style={{ fontSize: '11px', padding: '2px 6px', border: '1px solid var(--borda)', borderRadius: '5px', opacity: jobRodando ? 0.6 : 1 }}
+                                        onClick={() => gerarImagemCena(c.id, arquivo)}
+                                      >
+                                        {gerando ? '⏳' : '↻'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn btn-ghost"
+                                        title="Ver/editar prompt em inglês"
+                                        style={{ fontSize: '11px', padding: '2px 6px', border: '1px solid var(--borda)', borderRadius: '5px' }}
+                                        onClick={() => setPromptsAbertos((prev) => ({ ...prev, [chavePrompt]: !prev[chavePrompt] }))}
+                                      >
+                                        {promptAberto ? '▲' : '▼'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn btn-ghost"
+                                        title="Remover esta imagem da cena"
+                                        style={{ fontSize: '11px', padding: '2px 6px', border: '1px solid var(--borda)', borderRadius: '5px', color: 'var(--erro)' }}
+                                        disabled={jobRodando || promptsDaCena(c).length <= 1}
+                                        onClick={() => removerImagem(c.id, arquivo)}
+                                      >
+                                        🗑
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {promptAberto && (
+                                    <textarea
+                                      rows={2}
+                                      disabled={jobRodando}
+                                      placeholder="Prompt em inglês (ex.: close-up of clasped hands in warm light, minimalist, no text)"
+                                      style={{
+                                        width: '100%',
+                                        padding: '6px 8px',
+                                        background: 'rgba(0,0,0,0.3)',
+                                        border: '1px dashed var(--borda)',
+                                        borderRadius: '6px',
+                                        color: 'var(--texto-2)',
+                                        fontSize: '11px',
+                                        lineHeight: 1.4,
+                                        resize: 'vertical',
+                                      }}
+                                      value={prompt ?? ''}
+                                      onChange={(e) => setPromptImagem(c.id, j, e.target.value)}
+                                    />
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
 
                         <button
@@ -927,15 +1061,16 @@ export default function TestemunhosStudio() {
                           disabled={jobRodando}
                           style={{
                             fontSize: '11px',
-                            padding: '4px 8px',
-                            border: '1px solid var(--borda)',
+                            padding: '6px 8px',
+                            border: '1px dashed var(--borda)',
                             borderRadius: '6px',
-                            width: '100%',
+                            color: 'var(--ouro)',
                             opacity: jobRodando ? 0.6 : 1,
                           }}
-                          onClick={() => gerarImagemCena(c.id)}
+                          onClick={() => adicionarImagem(c.id)}
+                          title="Acrescenta mais uma ilustração a esta cena"
                         >
-                          {cenaGerandoImg ? '⏳ Gerando…' : `↻ ${c.imagem.existe ? 'Regerar' : 'Gerar'}`}
+                          ＋ Adicionar imagem à cena
                         </button>
                       </div>
 

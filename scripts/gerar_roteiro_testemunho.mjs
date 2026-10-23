@@ -5,7 +5,8 @@
  * Regras inegociáveis:
  * 1. Fidelidade absoluta ao relato original (zero invenção de fatos, nomes ou milagres).
  * 2. Hook/Gancho de impacto nos primeiros 3 segundos da Cena 1.
- * 3. Cenas minimalistas e cinematográficas de 25-45 palavras.
+ * 3. Cenas minimalistas e cinematográficas de 25-45 palavras, ilustradas por
+ *    várias imagens (TESTEMUNHO_IMAGENS_POR_CENA, padrão 3) que se revezam no vídeo.
  * 4. Fechamento adulto e acolhedor com CTA para ouvir mais testemunhos.
  *
  * Uso:
@@ -18,12 +19,26 @@ import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { request as httpRequest } from 'node:http';
-import { slugDe, modeloLLama, truncarMaterial, limparTextoDePromptImagem } from './util.mjs';
+import { slugDe, modeloLLama, limparTextoDePromptImagem } from './util.mjs';
 import { extrairJson } from './gerar_roteiro.mjs';
 
 const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SCRIPTS_DIR, '..');
 const LLAMA_URL = process.env.LLAMA_URL || 'http://127.0.0.1:8091';
+
+// Quantas imagens ilustram cada cena (revezadas no vídeo durante a narração).
+const IMAGENS_POR_CENA = Math.max(1, Number(process.env.TESTEMUNHO_IMAGENS_POR_CENA) || 3);
+
+// Reenquadros usados para completar a cena quando o modelo devolve menos
+// prompts que o alvo — variações do MESMO instante, sem inventar elementos.
+const VARIACOES_DE_QUADRO = [
+  'wide establishing shot of the same scene, generous negative space, soft atmospheric light',
+  'intimate close-up detail of the same moment, shallow depth of field, warm rim light',
+  'low angle silhouette against the light source, minimalist cinematic composition',
+  'overhead view of the same scene, muted palette, gentle falling shadows',
+  'slow motion feel, drifting particles of light, same subject and setting',
+  'side profile framing, deep shadows, single warm light source, quiet mood',
+];
 
 function postJson(url, body, { timeoutMs = 15 * 60 * 1000 } = {}) {
   return new Promise((resolve, reject) => {
@@ -75,18 +90,19 @@ REGRAS OBRIGATÓRIAS E INEGOCIÁVEIS:
    - Português do Brasil natural, com frases bem pontuadas para pausas dramáticas de leitor de voz (TTS).
    - Escreva números e ordinais por extenso quando forem lidos em voz alta.
 
-4. CENAS SEQUENCIAIS MINIMALISTAS:
-   - Divida a história entre 4 a 10 cenas (dependendo da extensão do relato).
-   - Cada cena narrada deve ter entre 25 e 45 palavras (tempo ideal de 10 a 16 segundos por imagem).
-   - Cada cena deve ter um "imagem_prompt" em INGLÊS:
-     * Estilo minimalista, conceitual e cinematográfico.
-     * Descreva luz, sombra, atmosfera, silhuetas ou ação simples e marcante.
-     * NUNCA coloque texto na imagem. Sem balões de fala, sem diagramas.
-     * Exemplo: "cinematic minimalist illustration of a lone figure in prayer under a gentle beam of golden light in a dark room, deep emotional atmosphere, soft warm glow, no text"
+4. CENAS SEQUENCIAIS MINIMALISTAS (VÁRIAS IMAGENS POR CENA):
+    - Divida a história entre 6 e 12 cenas (dependendo da extensão do relato).
+    - Cada cena narrada deve ter entre 25 e 45 palavras (tempo ideal de 10 a 16 segundos por imagem).
+    - Cada cena DEVE trazer exatamente ${IMAGENS_POR_CENA} prompts de imagem em Inglês no array "imagens":
+      * TODOS descrevem O MESMO instante da cena, em planos/ângulos diferentes (plano aberto, detalhe próximo, silhueta contra a luz, visão superior...).
+      * Estilo minimalista, conceitual e cinematográfico. Descreva luz, sombra, atmosfera, silhuetas ou ação simples e marcante.
+      * NUNCA coloque texto na imagem. Sem balões de fala, sem diagramas.
+      * NUNCA invente elementos novos: são apenas reenquadros do mesmo momento já narrado.
+      * Exemplo: ["cinematic minimalist illustration of a lone figure in prayer under a gentle beam of golden light in a dark room, wide shot, deep emotional atmosphere, no text", "close-up of clasped hands in dim warm light, minimalist cinematic, no text", "silhouette of a person kneeling by a window at dawn, soft golden rays, minimalist, no text"]
 
 5. FECHAMENTO E CTA NA ÚLTIMA CENA:
-   - A última cena encerra o testemunho com gratidão e esperança para o espectador.
-   - Convida de forma calorosa e elegante a compartilhar a história com quem precisa de esperança e se inscrever para ouvir mais testemunhos reais.
+    - A última cena encerra o testemunho com gratidão e esperança para o espectador.
+    - Convida de forma calorosa e elegante a compartilhar a história com quem precisa de esperança e se inscrever para ouvir mais testemunhos reais.
 
 FORMATO DE RESPOSTA OBRIGATÓRIO (JSON PURO, SEM MARKDOWN):
 {
@@ -97,10 +113,33 @@ FORMATO DE RESPOSTA OBRIGATÓRIO (JSON PURO, SEM MARKDOWN):
       "id": "cena-01",
       "titulo_cena": "O Ponto de Ruptura",
       "narracao": "Frase de impacto que prende nos primeiros 3 segundos. Desenvolvimento curto da cena...",
-      "imagem_prompt": "cinematic minimalist illustration of..."
+      "imagens": ["cinematic minimalist illustration of...", "close-up minimalist illustration of...", "silhouette minimalist illustration of..."]
     }
   ]
 }`;
+
+/**
+ * Normaliza os prompts de imagem de uma cena: aceita `imagens` (novo) ou
+ * `imagem_prompt` (legado), remove vazios/duplicados e completa com
+ * reenquadros do mesmo instante até atingir IMAGENS_POR_CENA.
+ */
+function normalizarImagens(c) {
+  const brutos = Array.isArray(c.imagens) ? c.imagens : c.imagem_prompt ? [c.imagem_prompt] : [];
+  const limpos = [
+    ...new Set(brutos.map((p) => limparTextoDePromptImagem(String(p ?? '').trim())).filter(Boolean)),
+  ];
+  while (limpos.length < IMAGENS_POR_CENA) {
+    const base =
+      limpos[0] ||
+      'cinematic minimalist illustration, soft warm light, deep shadows, hopeful atmosphere, no text';
+    limpos.push(
+      limparTextoDePromptImagem(
+        `${base}, ${VARIACOES_DE_QUADRO[(limpos.length - 1) % VARIACOES_DE_QUADRO.length]}`,
+      ),
+    );
+  }
+  return limpos;
+}
 
 export async function gerarRoteiroTestemunho({ titulo, texto, formato = '16:9' }) {
   if (!texto || !texto.trim()) {
@@ -154,6 +193,9 @@ Transforme este relato no roteiro de cenas com fidelidade estrita. Responda APEN
   if (!roteiro.cenas || !Array.isArray(roteiro.cenas) || roteiro.cenas.length === 0) {
     throw new Error('Roteiro gerado não contém uma lista válida de cenas.');
   }
+  if (roteiro.cenas.length < 4) {
+    console.error(`[testemunho][aviso] Roteiro com apenas ${roteiro.cenas.length} cenas — o ideal é 6 ou mais.`);
+  }
 
   // Normalização
   const slug = slugDe(titulo || roteiro.titulo || 'testemunho');
@@ -164,11 +206,14 @@ Transforme este relato no roteiro de cenas com fidelidade estrita. Responda APEN
 
   roteiro.cenas = roteiro.cenas.map((c, i) => {
     const num = String(i + 1).padStart(2, '0');
+    const imagens = normalizarImagens(c);
     return {
       id: `cena-${num}`,
       titulo_cena: c.titulo_cena ? String(c.titulo_cena).trim() : `Cena ${i + 1}`,
       narracao: String(c.narracao || '').trim(),
-      imagem_prompt: limparTextoDePromptImagem(String(c.imagem_prompt || '').trim()),
+      imagens,
+      // Compat: leitores antigos (e o fallback de roteiros legados) leem o 1º prompt.
+      imagem_prompt: imagens[0],
     };
   });
 
