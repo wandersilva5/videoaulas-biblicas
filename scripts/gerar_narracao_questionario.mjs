@@ -110,11 +110,14 @@ async function gerarNarracaoPergunta(item, outDir, variar = false) {
 
 /**
  * Monta o texto da narração da pergunta a partir dos campos editáveis
- * (`pergunta` + `opcoes`) — NÃO usa `narracao_pergunta` do JSON, que é gerado
- * pelo LLM e fica congelado (editar as opções sem reescrever esse campo não
- * mudava o áudio). Assim áudio e tela ficam sempre consistentes.
+ * (`pergunta` + `opcoes`). Se o usuário salvou um texto manual na UI
+ * (`narracao_pergunta_manual`), esse texto tem prioridade. NÃO usa
+ * `narracao_pergunta` do JSON, que é gerado pelo LLM e fica congelado (editar
+ * as opções sem reescrever esse campo não mudava o áudio).
  */
-function montarNarracaoPergunta(p) {
+export function montarNarracaoPergunta(p) {
+  const manual = String(p.narracao_pergunta_manual ?? '').trim();
+  if (manual) return normalizarNarracaoPergunta(manual);
   const opcoes = (p.opcoes || [])
     .map((o, i) => `Opção ${String.fromCharCode(65 + i)}: ${String(o).replace(/^[A-Z]\)\s*/i, '').replace(/\.+$/, '')}`)
     .join('. ');
@@ -126,8 +129,12 @@ function montarNarracaoPergunta(p) {
  * Monta a narração da resposta a partir de `resposta_correta` + a opção correta.
  * Preserva a explicação do LLM (se existir) mas sempre com a letra certa de
  * acordo com `resposta_correta` (se você mudou a resposta, o áudio acompanha).
+ * Se o usuário salvou um texto manual (`narracao_resposta_manual`), ele tem
+ * prioridade e é narrado literalmente.
  */
-function montarNarracaoResposta(p) {
+export function montarNarracaoResposta(p) {
+  const manual = String(p.narracao_resposta_manual ?? '').trim();
+  if (manual) return manual;
   const idx = Number(p.resposta_correta ?? 0);
   const letra = String.fromCharCode(65 + idx);
   const opcaoCorreta = String((p.opcoes || [])[idx] || '')

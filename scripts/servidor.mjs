@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { slugDe, hashDe, esc, MIME, itensDoRoteiro, limparProjetosAntigosHtmlVideo, qwenEnv, truncarMaterial, MATERIAL_MAX_CHARS, imagemPromptIntro, imagemPromptConclusao, imagensDaCenaTestemunho, promptsImagemCena } from './util.mjs';
 import { extrairTextoPDF } from './pdf_texto.mjs';
+import { montarNarracaoPergunta, montarNarracaoResposta } from './gerar_narracao_questionario.mjs';
 
 const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SCRIPTS_DIR, '..');
@@ -350,11 +351,15 @@ async function artefatos(slug) {
             id: `${prefix}-pergunta`,
             existe: existsSync(audioP),
             mtime: mtimeDe(audioP),
+            texto: montarNarracaoPergunta({ ...p, numero: p.numero ?? i + 1 }),
+            manual: !!String(p.narracao_pergunta_manual ?? '').trim(),
           },
           resposta_audio: {
             id: `${prefix}-resposta`,
             existe: existsSync(audioR),
             mtime: mtimeDe(audioR),
+            texto: montarNarracaoResposta(p),
+            manual: !!String(p.narracao_resposta_manual ?? '').trim(),
           },
         };
       });
@@ -1403,6 +1408,32 @@ const server = createServer(async (req, res) => {
         return json(res, statusDeErroJob(e), { erro: e.message });
       }
       return json(res, 200, { ok: true });
+    }
+
+    // --- Questionário: editar o texto da narração (pergunta ou resposta) ---
+    if (recurso === 'narracao-questionario' && req.method === 'PUT') {
+      const body = await lerBody(req);
+      const questionarioPath = join(OUTPUT_DIR, slug, 'questionario.json');
+      if (!existsSync(questionarioPath)) {
+        return json(res, 400, { erro: 'Questionário não existe. Gere-o primeiro.' });
+      }
+      const m = /^q0*(\d+)-(pergunta|resposta)$/i.exec(String(body.itemId ?? ''));
+      if (!m) return json(res, 400, { erro: `Item "${body.itemId}" inválido (use q1-pergunta ou q1-resposta)` });
+      const idx = Number(m[1]) - 1;
+      const tipo = m[2].toLowerCase();
+      const q = JSON.parse(await readFile(questionarioPath, 'utf8'));
+      const p = (q.perguntas || [])[idx];
+      if (!p) return json(res, 400, { erro: `Pergunta ${idx + 1} não existe no questionário.` });
+      const campo = `narracao_${tipo}_manual`;
+      if (body.restaurar) {
+        delete p[campo];
+      } else {
+        const texto = String(body.texto ?? '').trim();
+        if (!texto) return json(res, 400, { erro: 'O texto da narração não pode ficar vazio.' });
+        p[campo] = texto;
+      }
+      await writeFile(questionarioPath, JSON.stringify(q, null, 2), 'utf8');
+      return json(res, 200, { ok: true, itemId: body.itemId, restaurar: !!body.restaurar });
     }
 
     // --- Questionário: apagar áudios (um item ou todos) ---

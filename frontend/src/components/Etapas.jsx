@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { api, contarPalavras, itensImagem, itensNarracao, servicoOk, urlImagem } from '../lib.js';
 import { useStudio } from '../store.jsx';
 
@@ -647,6 +647,155 @@ export function EtapaPdf() {
 // ---------------------------------------------------------------------------
 // Etapa 8 — Vídeo de Questionário
 // ---------------------------------------------------------------------------
+// Áudio do questionário com o texto da narração editável ao lado. Ao salvar, o
+// texto vai para questionario.json (`narracao_<tipo>_manual`) e passa a ser o
+// texto narrado; "↻ regenerar" salva o que estiver pendente e refaz o MP3.
+function AudioQuizEditavel({ slug, a, rotulo }) {
+  const { jobAtivo, servicos, rodarJob, toast, carregarArtefatos } = useStudio();
+  const [texto, setTexto] = useState(a.texto || '');
+  const [salvando, setSalvando] = useState(false);
+  // Muda após cada regeneração/apagamento para remontar o <audio> e reaplicar o
+  // src (que foi removido imperativamente para liberar o arquivo no Windows).
+  const [versao, setVersao] = useState(0);
+  const audioRef = useRef(null);
+
+  useEffect(() => { setTexto(a.texto || ''); }, [a.id, a.texto]);
+
+  const salvo = (a.texto || '').trim();
+  const sujo = texto.trim() !== salvo;
+  const ocupado = jobAtivo || salvando;
+  const srcAudio = `/media/${slug}/${a.id}-narracao.mp3?v=${a.mtime ?? ''}`;
+
+  const checarQwen = () => {
+    if (servicos && !servicoOk(servicos, 'qwen')) {
+      toast('Qwen3-TTS indisponível — não é possível gerar narração.', true);
+      return false;
+    }
+    return true;
+  };
+
+  // Solta APENAS este player (permite sobrescrever/apagar o MP3 no Windows sem
+  // derrubar os demais áudios da página).
+  const soltarPlayer = () => {
+    const el = audioRef.current;
+    if (!el) return;
+    try {
+      el.pause();
+      el.removeAttribute('src');
+      el.load();
+    } catch {
+      /* player já morto */
+    }
+  };
+
+  const salvar = async () => {
+    if (!sujo) return;
+    setSalvando(true);
+    try {
+      await api(`/api/narracao-questionario/${slug}`, { method: 'PUT', body: JSON.stringify({ itemId: a.id, texto }) });
+      toast('Texto da narração salvo. Use "↻ regenerar" para aplicar ao áudio.');
+      await carregarArtefatos();
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  const restaurar = async () => {
+    if (!confirm('Descartar o texto manual e voltar ao texto automático (gerado da pergunta/opções)?')) return;
+    setSalvando(true);
+    try {
+      await api(`/api/narracao-questionario/${slug}`, { method: 'PUT', body: JSON.stringify({ itemId: a.id, restaurar: true }) });
+      toast('Texto automático restaurado. Use "↻ regenerar" para aplicar ao áudio.');
+      await carregarArtefatos();
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  const regerar = async () => {
+    if (!checarQwen()) return;
+    soltarPlayer();
+    try {
+      if (sujo) {
+        await api(`/api/narracao-questionario/${slug}`, { method: 'PUT', body: JSON.stringify({ itemId: a.id, texto }) });
+      }
+      await rodarJob(
+        api(`/api/narracao-questionario/${slug}`, { method: 'POST', body: JSON.stringify({ itemId: a.id, variar: true }) }),
+        `Áudio ${a.id} regenerado.`,
+        { soltarPlayers: false },
+      );
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      setVersao((v) => v + 1);
+    }
+  };
+
+  const apagar = async () => {
+    if (!confirm(`Apagar o áudio ${a.id}?`)) return;
+    soltarPlayer();
+    try {
+      await rodarJob(
+        api(`/api/narracao-questionario/${slug}`, { method: 'DELETE', body: JSON.stringify({ itemId: a.id }) }),
+        'Áudio apagado.',
+        { soltarPlayers: false },
+      );
+    } finally {
+      setVersao((v) => v + 1);
+    }
+  };
+
+  return (
+    <div className="item-audio item-audio-quiz">
+      <div className="linha-audio">
+        <span className="rotulo">
+          {rotulo}
+          {a.manual && <em className="selo-manual" title="Texto editado manualmente">editado</em>}
+        </span>
+        {a.existe
+          ? <audio key={versao} ref={audioRef} controls preload="none" src={srcAudio} />
+          : <span className="msg-progresso">sem áudio ainda</span>}
+        {a.existe && (
+          <a className="btn btn-mini" href={`/media/${slug}/${a.id}-narracao.mp3`} download title="Baixar MP3">⬇</a>
+        )}
+        <button
+          className="btn btn-mini regen"
+          title="Salva o texto (se alterado) e regenera com novo seed de voz"
+          disabled={ocupado}
+          onClick={regerar}
+        >
+          ↻ regenerar
+        </button>
+        {a.existe && (
+          <button
+            className="btn btn-mini btn-perigo"
+            title="Apagar este MP3"
+            disabled={ocupado}
+            onClick={apagar}
+          >
+            🗑
+          </button>
+        )}
+      </div>
+      <div className="campo-texto">
+        <label>Texto narrado ({rotulo.toLowerCase()}){sujo ? ' — alterado, não salvo' : ''}</label>
+        <textarea rows="4" value={texto} disabled={ocupado} onChange={(e) => setTexto(e.target.value)} />
+        <div className="acoes-texto">
+          <button className="btn btn-mini btn-primario" disabled={!sujo || ocupado} onClick={salvar}>💾 Salvar texto</button>
+          {a.manual && (
+            <button className="btn btn-mini" disabled={ocupado} onClick={restaurar}>↺ Restaurar automático</button>
+          )}
+          {sujo && <span className="msg-progresso" style={{ margin: 0 }}>Salve e depois regenere o áudio para ouvir a mudança.</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function EtapaQuestionario() {
   const { artefatos, slug, jobAtivo, servicos, rodarJob, toast } = useStudio();
   const quiz = artefatos.questionario;
@@ -658,42 +807,6 @@ export function EtapaQuestionario() {
     }
     return true;
   };
-
-  const playerAudio = (a, rotulo) => (
-    <div className="item-audio" key={a.id}>
-      <span className="rotulo">{rotulo}</span>
-      {a.existe
-        ? <audio controls preload="none" src={`/media/${slug}/${a.id}-narracao.mp3`} />
-        : <span className="msg-progresso">sem áudio ainda</span>}
-      {a.existe && (
-        <a className="btn btn-mini" href={`/media/${slug}/${a.id}-narracao.mp3`} download title="Baixar MP3">⬇</a>
-      )}
-      <button
-        className="btn btn-mini regen"
-        title="Regenera com novo seed de voz (tenta corrigir pronúncia)"
-        disabled={jobAtivo}
-        onClick={() => {
-          if (!checarQwen()) return;
-          rodarJob(api(`/api/narracao-questionario/${slug}`, { method: 'POST', body: JSON.stringify({ itemId: a.id, variar: true }) }), `Áudio ${a.id} regenerado.`);
-        }}
-      >
-        ↻ regenerar
-      </button>
-      {a.existe && (
-        <button
-          className="btn btn-mini btn-perigo"
-          title="Apagar este MP3"
-          disabled={jobAtivo}
-          onClick={() => {
-            if (!confirm(`Apagar o áudio ${a.id}?`)) return;
-            rodarJob(api(`/api/narracao-questionario/${slug}`, { method: 'DELETE', body: JSON.stringify({ itemId: a.id }) }), 'Áudio apagado.');
-          }}
-        >
-          🗑
-        </button>
-      )}
-    </div>
-  );
 
   return (
     <>
@@ -773,12 +886,12 @@ export function EtapaQuestionario() {
       {(quiz?.perguntas || []).length > 0 && (
         <>
           <h4 style={{ marginTop: 18, color: 'var(--dourado)' }}>Áudios do questionário</h4>
-          <p className="msg-progresso">Se alguma pronúncia não ficou boa, use "↻ regenerar" para refazer só aquele áudio (novo seed de voz). Depois monte o vídeo de novo.</p>
+          <p className="msg-progresso">Edite o texto narrado ao lado de cada áudio e clique em <strong>💾 Salvar texto</strong>. Depois use <strong>↻ regenerar</strong> para refazer o áudio com o texto novo (também ajusta a pronúncia com um novo seed). Por fim, monte o vídeo de novo.</p>
           {(quiz.perguntas || []).map((p) => (
             <div className="cartao" style={{ marginTop: 10, padding: '14px 18px' }} key={p.numero}>
               <strong style={{ color: 'var(--dourado)' }}>{p.numero}. {p.tema}</strong>
-              {playerAudio(p.pergunta_audio, 'Pergunta')}
-              {playerAudio(p.resposta_audio, 'Resposta')}
+              <AudioQuizEditavel slug={slug} a={p.pergunta_audio} rotulo="Pergunta" />
+              <AudioQuizEditavel slug={slug} a={p.resposta_audio} rotulo="Resposta" />
             </div>
           ))}
         </>

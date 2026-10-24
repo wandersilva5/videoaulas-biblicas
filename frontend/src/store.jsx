@@ -294,9 +294,13 @@ export function StudioProvider({ children }) {
     });
   }, []);
 
-  const rodarJob = useCallback(async (promise, mensagemOk) => {
+  const rodarJob = useCallback(async (promise, mensagemOk, opcoes = {}) => {
     setJobAtivo(true);
-    liberarPlayers();
+    // Por padrão solta todos os players (Windows trava a substituição do
+    // arquivo com um handle aberto). Jobs que já soltam só o próprio player
+    // passam `{ soltarPlayers: false }` — senão os demais <audio> ficam sem
+    // `src` e o React não os recria (só voltam com F5).
+    if (opcoes.soltarPlayers !== false) liberarPlayers();
     try {
       await promise;
       toast(mensagemOk);
